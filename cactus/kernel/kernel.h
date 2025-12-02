@@ -101,6 +101,9 @@ void cactus_matmul_f16(const __fp16* a, const __fp16* b_transposed, __fp16* c,
 void cactus_matmul_f32(const float* a, const float* b_transposed, float* c,
                        size_t M, size_t K, size_t N);
 
+void cactus_matmul_f4_to_int32(const int8_t* a, const int8_t* b_transposed, int32_t* c,
+                               size_t M, size_t K, size_t N);
+
 
 void cactus_transpose_2d_int8(const int8_t* source, int8_t* destination, 
                                size_t num_rows, size_t num_cols, size_t start_row, size_t end_row);
