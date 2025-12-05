@@ -1,5 +1,4 @@
 #include "test_utils.h"
-#include "test_audio_sdl.h"
 #include <fstream>
 #include <cstdlib>
 #include <cstdio>
@@ -644,7 +643,7 @@ static bool test_pcm_transcription() {
                     Metrics m;
                     m.parse(response);
                     m.print_perf(get_memory_usage_mb());
-                    test_passed = true;
+                    test_passed = (rc > 0 && m.completion_tokens >= 1);
                 } else {
                     std::cerr << "Transcription failed\n";
                 }
