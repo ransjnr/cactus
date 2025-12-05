@@ -5,6 +5,7 @@ import sys
 import json
 import argparse
 import re
+import math
 from pathlib import Path
 from typing import Optional
 
@@ -26,11 +27,161 @@ except ImportError:
     hf_hub_download = None  # type: ignore
 
 
+fp4_vals = np.array([-12, -8, -6, -4, -3, -2, -1, 0, 1, 2, 3, 4, 6, 8, 12], dtype=np.float32)
+
+def vectorized_closest_fp4(normalized):
+    flat = normalized.ravel()
+
+    clipped = np.clip(flat, -12.0, 12.0)
+    indices = np.searchsorted(fp4_vals, clipped)
+    indices = np.clip(indices, 1, len(fp4_vals) - 1)
+
+    left_vals = fp4_vals[indices - 1]
+    right_vals = fp4_vals[indices]
+    left_dist = np.abs(clipped - left_vals)
+    right_dist = np.abs(clipped - right_vals)
+
+    result = np.where(left_dist <= right_dist, left_vals, right_vals)
+    return result.reshape(normalized.shape).astype(np.int8)
+
+def fp4_row_quantize(tensor, stats_tracker=None, args=None):
+    # 1. vectorized scaling per row -> matrix of scaled rows, scales
+    if isinstance(tensor, torch.Tensor):
+        data = tensor.detach().cpu().numpy()
+    else:
+        data = np.array(tensor)
+
+    # Ensure 2D
+    shape = data.shape
+    if data.ndim == 1:
+        data = data.reshape(1, -1)
+
+    # Compute per-row scale factors using percentile-based clipping
+    dist = 0.1
+    p_low = np.percentile(data, dist, axis=1, keepdims=True)
+    p_high = np.percentile(data, 100 - dist, axis=1, keepdims=True)
+    abs_max = np.maximum(np.abs(p_low), np.abs(p_high))
+
+    # Avoid division by zero
+    scales = np.where(abs_max != 0, abs_max / 12.0, 1.0).flatten().astype(np.float16)
+
+    # Normalize each row by its scale
+    scales_for_division = scales.reshape(-1, 1)
+    normalized = data / scales_for_division
+    normalized = normalized.reshape(shape)
+
+    # 2. vectorized quantization to closest FP4 value -> return quantized data, scales
+    quantized_data = vectorized_closest_fp4(normalized)
+
+    dequantized_data = quantized_data.astype(np.float32) * scales_for_division
+    mse_error = np.mean((data - dequantized_data) ** 2)
+    snr_db = 10 * np.log10(np.var(data) / mse_error) if mse_error > 0 else float('inf')
+
+    original_flat = data.flatten()
+    dequantized_flat = dequantized_data.flatten()
+    cos_sim = np.dot(original_flat, dequantized_flat) / (np.linalg.norm(original_flat) * np.linalg.norm(dequantized_flat))
+    saturated_values = np.sum(np.abs(quantized_data) == 12)
+    saturation_percent = (saturated_values / quantized_data.size) * 100
+
+    if stats_tracker:
+        stats_tracker['quantized_tensors'] += 1
+        stats_tracker['quantized_parameters'] += tensor.size
+        stats_tracker['mse_values'].append(mse_error)
+        stats_tracker['snr_values'].append(snr_db)
+        stats_tracker['cos_sim_values'].append(cos_sim)
+        saturation_warning_threshold = args.saturation_warning_threshold if args else 0.1
+        if saturation_percent > saturation_warning_threshold:
+            stats_tracker['saturation_warnings'] += 1
+
+    return quantized_data, scales
+    
+
+def fp4_quantize(tensor, stats_tracker=None, args=None):
+    mean_val = np.mean(tensor)
+    std_val = np.std(tensor)
+    min_val = np.min(tensor)
+    max_val = np.max(tensor)
+
+    qmin, qmax = -12, 12
+    standard_scale = (max_val - min_val) / (qmax - qmin) if max_val != min_val else 1.0
+    
+    standard_zero_point = qmax - max_val / standard_scale
+    standard_zero_point_clipped = np.clip(np.round(standard_zero_point), qmin, qmax)
+    test_quantized = np.clip(np.round(tensor / standard_scale + standard_zero_point_clipped), qmin, qmax)
+    test_saturation = np.sum(np.abs(test_quantized) >= 12) / tensor.size
+    
+    saturation_threshold = args.saturation_threshold if args else 0.01
+    if test_saturation > saturation_threshold:
+        outlier_percentile = args.outlier_percentile if args else 0.01
+        lower_percentile = np.percentile(tensor, outlier_percentile)
+        upper_percentile = np.percentile(tensor, 100 - outlier_percentile)
+        
+        mean_val = np.mean(tensor)
+        std_val = np.std(tensor)
+        sigma_multiplier = args.sigma_multiplier if args else 3.5
+        three_sigma_min = mean_val - sigma_multiplier * std_val
+        three_sigma_max = mean_val + sigma_multiplier * std_val
+        
+        clipped_min = max(min_val, min(lower_percentile, three_sigma_min))
+        clipped_max = min(max_val, max(upper_percentile, three_sigma_max))
+        
+        range_threshold = args.range_threshold if args else 0.5
+        if (clipped_max - clipped_min) < range_threshold * (max_val - min_val):
+            clipped_min = min_val
+            clipped_max = max_val
+    else:
+        clipped_min = min_val
+        clipped_max = max_val
+    
+    dist = 0.1
+    p_low = np.percentile(tensor, dist)
+    p_high = np.percentile(tensor, 100 - dist)
+    abs_max = max(abs(p_low), abs(p_high))
+    scale = abs_max / 12 if abs_max != 0 else 1.0
+    normalized = tensor / scale
+
+    quantized_data = vectorized_closest_fp4(normalized)
+
+    dequantized_data = quantized_data.astype(np.float32) * scale
+    mse_error = np.mean((tensor - dequantized_data) ** 2)
+    snr_db = 10 * np.log10(np.var(tensor) / mse_error) if mse_error > 0 else float('inf')
+
+    original_flat = tensor.flatten()
+    dequantized_flat = dequantized_data.flatten()
+    cos_sim = np.dot(original_flat, dequantized_flat) / (np.linalg.norm(original_flat) * np.linalg.norm(dequantized_flat))
+    saturated_values = np.sum(np.abs(quantized_data) == 127)
+    saturation_percent = (saturated_values / quantized_data.size) * 100
+
+    if stats_tracker:
+        stats_tracker['quantized_tensors'] += 1
+        stats_tracker['quantized_parameters'] += tensor.size
+        stats_tracker['mse_values'].append(mse_error)
+        stats_tracker['snr_values'].append(snr_db)
+        stats_tracker['cos_sim_values'].append(cos_sim)
+        saturation_warning_threshold = args.saturation_warning_threshold if args else 0.1
+        if saturation_percent > saturation_warning_threshold:
+            stats_tracker['saturation_warnings'] += 1
+    
+    assert tensor.shape[1] % 2 == 0, "FP4 quantization requires even number of columns"
+    assert np.all(np.abs(tensor) <= 12), "Somehow got out of range numbers"
+    even_row_idxs = np.arange(0, tensor.shape[1], 2)
+    odd_row_idxs = np.arange(1, tensor.shape[1], 2)
+    even_data = quantized_data[:, even_row_idxs]
+    odd_data = quantized_data[:, odd_row_idxs]
+    packed_data = (np.left_shift(even_data.astype(np.uint8), 4) | (odd_data.astype(np.uint8) & 0x0F))
+
+    return packed_data, scale
+
 def save_tensor_with_header(tensor, output_path, precision='FP32', transpose=False, stats_tracker=None, args=None, model_type=None):
     if isinstance(tensor, torch.Tensor):
         data = tensor.detach().cpu().numpy()
     else:
         data = np.array(tensor)
+    
+    shape = list(data.shape)
+    if transpose and len(shape) == 2:
+        data = data.T
+        shape = [shape[1], shape[0]]
 
     original_data = data.copy()
 
@@ -44,12 +195,13 @@ def save_tensor_with_header(tensor, output_path, precision='FP32', transpose=Fal
     max_val = np.max(original_data)
     
     
-    if precision == 'INT8':
+    if precision == 'INT8' or precision == 'FP4':
         filename = output_path.name
         if any(x in filename for x in ['norm', 'bias', 'vision']) or (model_type == 'bert' and 'embedding' in filename):
             # print(f"Skipping INT8 quantization for {filename}, using FP16 instead.")
             precision = 'FP16'
-    
+    if precision == 'FP4':
+        data, scale = fp4_row_quantize(original_data, stats_tracker=stats_tracker, args=args)
     if precision == 'INT8':
         qmin, qmax = -128, 127
         standard_scale = (max_val - min_val) / (qmax - qmin) if max_val != min_val else 1.0
@@ -118,14 +270,7 @@ def save_tensor_with_header(tensor, output_path, precision='FP32', transpose=Fal
         stats_tracker['total_tensors'] += 1
         stats_tracker['total_parameters'] += original_data.size
     
-    shape = list(data.shape)
-    if transpose and len(shape) == 2:
-        data = data.T
-        shape = [shape[1], shape[0]]
-    
     data = data.flatten()
-    
-    #print(f"Saving {output_path.name}: {precision} {shape}")
     
     with open(output_path, 'wb') as f:
         ndim = len(shape)
@@ -138,6 +283,8 @@ def save_tensor_with_header(tensor, output_path, precision='FP32', transpose=Fal
             prec_val = 0
         elif precision == 'FP16':
             prec_val = 1
+        elif precision == 'FP4':
+            prec_val = 3
         else: 
             prec_val = 2
         f.write(struct.pack('<I', prec_val))
@@ -146,17 +293,19 @@ def save_tensor_with_header(tensor, output_path, precision='FP32', transpose=Fal
             element_size = 1
         elif precision == 'FP16':
             element_size = 2
+        elif precision == 'FP4':
+            element_size = 0.5
         else: 
             element_size = 4
-        byte_size = data.size * element_size
+        byte_size = math.ceil(data.size * element_size)
         f.write(struct.pack('<Q', byte_size))
         
-        if precision == 'INT8':
+        if precision == 'INT8' or precision == 'FP4':
             f.write(struct.pack('<f', scale))
             
         f.write(data.tobytes())
     
-    if precision == 'INT8':
+    if precision == 'INT8' or precision == 'FP4':
         scale_path = output_path.with_suffix('.scale')
         with open(scale_path, 'w') as f:
             f.write(f"{scale:.10f}\n")
@@ -596,7 +745,7 @@ def convert_hf_model_weights(model, output_dir, precision='INT8', args=None):
         fp16_tensors = quantization_stats['total_tensors'] - quantization_stats['quantized_tensors']
         low_snr_fallbacks = quantization_stats.get('low_snr_fallbacks', 0)
         snr_threshold = args.snr_threshold if args else 30.0
-        print(f"Processed {quantization_stats['quantized_tensors']} INT8 tensors, {fp16_tensors} FP16 tensors ({low_snr_fallbacks} SNR<{snr_threshold}dB fallbacks)")
+        print(f"Processed {quantization_stats['quantized_tensors']} {precision} tensors, {fp16_tensors} FP16 tensors ({low_snr_fallbacks} SNR<{snr_threshold}dB fallbacks)")
 
     return model_config
 
@@ -1321,7 +1470,7 @@ def convert_hf_to_cactus_vlm(model_name, output_dir, precision='INT8', cache_dir
 
     config = convert_hf_model_weights_vlm(model, output_dir, precision, args)
 
-    if precision == 'INT8':
+    if precision == 'INT8' or precision == 'FP4':
         config['precision'] = "FP16"
     else:
         config['precision'] = precision
@@ -1466,7 +1615,7 @@ def convert_hf_to_cactus_vlm(model_name, output_dir, precision='INT8', cache_dir
     config = convert_hf_model_weights(model, output_dir, precision, args)
 
     # Preserve your original precision field behavior
-    if precision == 'INT8':
+    if precision == 'INT8' or precision == 'FP4':
         config['precision'] = "FP16"
     else:
         config['precision'] = precision
@@ -1550,7 +1699,7 @@ def convert_hf_to_cactus(model_name, output_dir, precision='INT8', cache_dir=Non
     else:
         config.setdefault('model_variant', 'default')
 
-    if precision == 'INT8':
+    if precision == 'INT8' or precision == 'FP4':
         config['precision'] = "FP16"
     else:
         config['precision'] = precision
@@ -1576,7 +1725,7 @@ def create_parser():
     
     parser.add_argument('model_name', help='HuggingFace model name (e.g., "Qwen/Qwen3-0.6B")')
     parser.add_argument('output_dir', help='Directory to write converted files')
-    parser.add_argument('--precision', choices=['INT8', 'FP16', 'FP32'], default='INT8',
+    parser.add_argument('--precision', choices=['INT8', 'FP16', 'FP32', 'FP4'], default='INT8',
                        help='Quantization precision')
     parser.add_argument('--cache-dir', help='Cache directory for HuggingFace models')
     parser.add_argument('--token', type=str, help='HuggingFace API token for gated models (or set HF_TOKEN env var)')
@@ -1601,8 +1750,8 @@ if __name__ == '__main__':
     parser = create_parser()
     args = parser.parse_args()
     
-    if args.precision not in ['INT8', 'FP16', 'FP32']:
-        print(f"Error: Invalid precision '{args.precision}'. Must be INT8, FP16, or FP32")
+    if args.precision not in ['INT8', 'FP16', 'FP32', 'FP4']:
+        print(f"Error: Invalid precision '{args.precision}'. Must be INT8, FP16, FP32, or FP4")
         sys.exit(1)
     
     convert_hf_to_cactus(args.model_name, args.output_dir, args.precision, args.cache_dir, args)
