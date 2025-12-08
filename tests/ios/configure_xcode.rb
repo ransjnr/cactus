@@ -95,10 +95,7 @@ target.build_configurations.each do |config|
   # Set the deployment target
   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
 
-  # Code signing settings for simulator
-  config.build_settings['CODE_SIGN_IDENTITY'] = ''
   config.build_settings['CODE_SIGN_STYLE'] = 'Automatic'
-  config.build_settings['DEVELOPMENT_TEAM'] = ''
 
   # Add compiler flags
   config.build_settings['OTHER_CPLUSPLUSFLAGS'] ||= ['$(inherited)']
@@ -106,7 +103,27 @@ target.build_configurations.each do |config|
   config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-D__ARM_NEON=1'
   config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-D__ARM_FEATURE_FP16_VECTOR_ARITHMETIC=1'
   config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-D__ARM_FEATURE_DOTPROD=1'
+  # Enable ARM features at compiler level (match CMake: armv8.2-a+fp16+simd+dotprod)
+  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-march=armv8.2-a+fp16+simd+dotprod'
+
+  # Optimization flags (match CMake)
+  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-O3'
+  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-DNDEBUG'
+  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-fomit-frame-pointer'
+  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-funroll-loops'
+  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-ftree-vectorize'
+  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-fvisibility=hidden'
+  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-fvisibility-inlines-hidden'
+  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-ffunction-sections'
+  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-fdata-sections'
+
+  # Linker flags (match CMake)
+  config.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
+  config.build_settings['OTHER_LDFLAGS'] << '-Wl,-dead_strip'
+
+  # Enable LTO (Link Time Optimization)
+  config.build_settings['LLVM_LTO'] = 'YES'
 end
 
 project.save
-puts "✓ Xcode project configured"
+puts "Xcode project configured"

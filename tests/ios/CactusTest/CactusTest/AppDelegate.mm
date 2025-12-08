@@ -99,6 +99,18 @@ extern int test_performance_main();
 }
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+#if !TARGET_OS_SIMULATOR
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDirectory = paths[0];
+    NSString *logPath = [documentsDirectory stringByAppendingPathComponent:@"cactus_test.log"];
+
+    freopen([logPath UTF8String], "w", stdout);
+    freopen([logPath UTF8String], "a", stderr);
+
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
+#endif
+
     // Increase file descriptor limit
     struct rlimit limit;
     limit.rlim_cur = 4096;
@@ -126,12 +138,16 @@ extern int test_performance_main();
         setenv("CACTUS_TEST_TRANSCRIBE_MODEL", [transcribePath UTF8String], 1);
     }
 
-    test_kernel_main();
-    test_graph_main();
-    test_kv_cache_main();
-    test_engine_main();
-    test_performance_main();
-    exit(0);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        test_kernel_main();
+        test_graph_main();
+        test_kv_cache_main();
+        test_engine_main();
+        test_performance_main();
+        exit(0);
+    });
+
+    return YES;
 }
 
 - (UISceneConfiguration *)application:(UIApplication *)application configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession options:(UISceneConnectionOptions *)options {
