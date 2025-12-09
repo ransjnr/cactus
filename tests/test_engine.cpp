@@ -7,20 +7,8 @@
 
 using namespace EngineTestUtils;
 
-// Lazy initialization to allow environment variables to be set at runtime (important for iOS)
-static const char* get_model_path() {
-    static const char* path = std::getenv("CACTUS_TEST_MODEL");
-    return path;
-}
-
-static const char* get_transcribe_model_path() {
-    static const char* path = std::getenv("CACTUS_TEST_TRANSCRIBE_MODEL");
-    return path;
-}
-
-#define g_model_path get_model_path()
-#define g_transcribe_model_path get_transcribe_model_path()
-
+const char* g_model_path = std::getenv("CACTUS_TEST_MODEL");
+const char* g_transcribe_model_path = std::getenv("CACTUS_TEST_TRANSCRIBE_MODEL");
 const char* g_audio_file_path = "../assets/test.wav";
 const char* g_whisper_prompt = "<|startoftranscript|><|en|><|transcribe|><|notimestamps|>";
 
@@ -40,33 +28,9 @@ bool test_streaming() {
               << "║" << std::setw(42) << std::left << "      STREAMING & FOLLOW-UP TEST" << "║\n"
               << "╚══════════════════════════════════════════╝\n";
 
-    // Debug: check if files exist
-    std::cout << "Model path: " << g_model_path << "\n";
-    std::string config_path = std::string(g_model_path) + "/config.txt";
-    std::ifstream test_file(config_path);
-    if (test_file.is_open()) {
-        std::cout << "✓ Can open config.txt\n";
-        test_file.close();
-    } else {
-        std::cout << "✗ Cannot open config.txt at: " << config_path << "\n";
-        std::cout << "  errno: " << strerror(errno) << "\n";
-    }
-
-    // Check for specific weight files
-    std::string weight_file = std::string(g_model_path) + "/projector_layer_norm.weights";
-    std::ifstream weight_test(weight_file, std::ios::binary);
-    if (weight_test.is_open()) {
-        std::cout << "✓ Can open weight file\n";
-        weight_test.close();
-    } else {
-        std::cout << "✗ Cannot open weight file: " << weight_file << "\n";
-        std::cout << "  errno: " << strerror(errno) << "\n";
-    }
-
     cactus_model_t model = cactus_init(g_model_path, 2048, nullptr);
     if (!model) {
-        const char* error = cactus_get_last_error();
-        std::cerr << "[✗] Failed to initialize model: " << (error ? error : "unknown error") << "\n";
+        std::cerr << "[✗] Failed to initialize model\n";
         return false;
     }
 

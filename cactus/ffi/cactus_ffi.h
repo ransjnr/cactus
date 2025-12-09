@@ -22,8 +22,6 @@ typedef void (*cactus_token_callback)(const char* token, uint32_t token_id, void
 
 CACTUS_FFI_EXPORT cactus_model_t cactus_init(const char* model_path, size_t context_size, const char* corpus_dir);
 
-CACTUS_FFI_EXPORT const char* cactus_get_last_error();
-
 CACTUS_FFI_EXPORT int cactus_complete(
     cactus_model_t model,
     const char* messages_json,

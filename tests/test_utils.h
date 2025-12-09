@@ -31,9 +31,6 @@ bool verify_graph_against_data(CactusGraph& graph, size_t node_id, const void* e
 void fill_random_int8(std::vector<int8_t>& data);
 void fill_random_float(std::vector<float>& data);
 
-// Get platform-compatible writable file path
-std::string get_writable_path(const std::string& filename);
-
 template<typename Func>
 double time_function(Func&& func, int iterations = 1) {
     auto start = std::chrono::high_resolution_clock::now();

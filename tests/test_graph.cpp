@@ -424,7 +424,7 @@ bool test_graph_save_load() {
         graph.set_input(input_b, const_cast<void*>(static_cast<const void*>(data_b.data())), Precision::INT8);
         graph.execute();
         
-        std::string filename = TestUtils::get_writable_path("test_graph_save_load.bin");
+        std::string filename = "test_graph_save_load.bin";
         GraphFile::save_node(graph, result_id, filename);
         
         CactusGraph new_graph;
@@ -647,7 +647,7 @@ bool test_mmap_gather() {
     size_t temp_embeddings = graph.input({4, 3}, Precision::FP32);
     graph.set_input(temp_embeddings, embeddings_data.data(), Precision::FP32);
     
-    const std::string temp_file = TestUtils::get_writable_path("test_embeddings.bin");
+    const std::string temp_file = "test_embeddings.bin";
     GraphFile::save_node(graph, temp_embeddings, temp_file);
     
     graph.hard_reset();
@@ -732,7 +732,7 @@ bool test_embedding_from_file() {
     size_t temp_embeddings = graph.input({4, 3}, Precision::FP32);
     graph.set_input(temp_embeddings, embeddings_data.data(), Precision::FP32);
     
-    const std::string temp_file = TestUtils::get_writable_path("test_embedding.bin");
+    const std::string temp_file = "test_embedding.bin";
     GraphFile::save_node(graph, temp_embeddings, temp_file);
     
     graph.hard_reset();

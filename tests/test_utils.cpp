@@ -2,10 +2,6 @@
 #include <random>
 #include <sstream>
 
-#ifdef __APPLE__
-#include <TargetConditionals.h>
-#endif
-
 namespace TestUtils {
 
 static std::mt19937 gen(42);
@@ -87,15 +83,6 @@ void fill_random_int8(std::vector<int8_t>& data) {
 void fill_random_float(std::vector<float>& data) {
     std::uniform_real_distribution<float> dist(-2.0f, 2.0f);
     for (auto& val : data) val = dist(gen);
-}
-
-std::string get_writable_path(const std::string& filename) {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
-    const char* tmpdir = std::getenv("TMPDIR");
-    if (!tmpdir) return filename;
-    return std::string(tmpdir) + "/" + filename;
-#endif
-    return filename;
 }
 
 TestRunner::TestRunner(const std::string& suite_name)

@@ -96,7 +96,7 @@ int cactus_complete(
             next_token = handle->model->generate(last_token_vec, temperature, top_p, top_k);
         } else {
             if (!image_paths.empty()) {
-                next_token = handle->model->generate_with_images(tokens_to_process, image_paths, temperature, top_p, top_k, "");
+                next_token = handle->model->generate_with_images(tokens_to_process, image_paths, temperature, top_p, top_k, "profile.txt");
             } else {
                 constexpr size_t PREFILL_CHUNK_SIZE = 256;
 
@@ -116,7 +116,7 @@ int cactus_complete(
                                                       tokens_to_process.end());
                     next_token = handle->model->generate(final_chunk, temperature, top_p, top_k);
                 } else {
-                    next_token = handle->model->generate(tokens_to_process, temperature, top_p, top_k, "");
+                    next_token = handle->model->generate(tokens_to_process, temperature, top_p, top_k, "profile.txt");
                 }
             }
         }
