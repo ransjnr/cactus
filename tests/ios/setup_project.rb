@@ -65,12 +65,6 @@ def generate_app_delegate(output_path, test_files)
         return YES;
     }
 
-    - (UISceneConfiguration *)application:(UIApplication *)application configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession options:(UISceneConnectionOptions *)options {
-        return [[UISceneConfiguration alloc] initWithName:@"Default Configuration" sessionRole:connectingSceneSession.role];
-    }
-
-    - (void)application:(UIApplication *)application didDiscardSceneSessions:(NSSet<UISceneSession *> *)sceneSessions {}
-
     @end
   OBJC
 
@@ -166,6 +160,10 @@ target.build_configurations.each do |config|
   config.build_settings['CLANG_CXX_LIBRARY'] = 'libc++'
   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
   config.build_settings['CODE_SIGN_STYLE'] = 'Automatic'
+
+  # Remove storyboard references (headless test app)
+  config.build_settings.delete('INFOPLIST_KEY_UILaunchStoryboardName')
+  config.build_settings.delete('INFOPLIST_KEY_UIMainStoryboardFile')
 
   # Compiler flags
   config.build_settings['OTHER_CPLUSPLUSFLAGS'] ||= ['$(inherited)']
