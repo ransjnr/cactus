@@ -22,15 +22,15 @@ def generate_app_delegate(output_path, test_files)
 
     @implementation AppDelegate
 
-    - (void)copyModelFromBundle:(NSString *)bundlePath toDocuments:(const char *)modelDir {
-        if (!modelDir) return;
+    - (void)copyFromBundle:(NSString *)bundlePath toDocuments:(const char *)name {
+        if (!name) return;
         NSFileManager *fileManager = [NSFileManager defaultManager];
-        NSString *modelName = [NSString stringWithUTF8String:modelDir];
-        NSString *sourceModelPath = [NSString stringWithFormat:@"%@/%@", bundlePath, modelName];
-        if ([fileManager fileExistsAtPath:modelName]) {
-            [fileManager removeItemAtPath:modelName error:nil];
+        NSString *itemName = [NSString stringWithUTF8String:name];
+        NSString *sourceItemPath = [NSString stringWithFormat:@"%@/%@", bundlePath, itemName];
+        if ([fileManager fileExistsAtPath:itemName]) {
+            [fileManager removeItemAtPath:itemName error:nil];
         }
-        [fileManager copyItemAtPath:sourceModelPath toPath:modelName error:nil];
+        [fileManager copyItemAtPath:sourceItemPath toPath:itemName error:nil];
     }
 
     - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
@@ -46,8 +46,9 @@ def generate_app_delegate(output_path, test_files)
     #endif
 
         NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
-        [self copyModelFromBundle:bundlePath toDocuments:getenv("CACTUS_TEST_MODEL")];
-        [self copyModelFromBundle:bundlePath toDocuments:getenv("CACTUS_TEST_TRANSCRIBE_MODEL")];
+        [self copyFromBundle:bundlePath toDocuments:getenv("CACTUS_TEST_MODEL")];
+        [self copyFromBundle:bundlePath toDocuments:getenv("CACTUS_TEST_TRANSCRIBE_MODEL")];
+        [self copyFromBundle:bundlePath toDocuments:getenv("CACTUS_TEST_ASSETS")];
 
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
     #{test_calls}

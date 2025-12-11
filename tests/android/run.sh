@@ -247,15 +247,20 @@ model_dir=$(echo "$MODEL_NAME" | sed 's|.*/||' | tr '[:upper:]' '[:lower:]')
 transcribe_model_dir=$(echo "$TRANSCRIBE_MODEL_NAME" | sed 's|.*/||' | tr '[:upper:]' '[:lower:]')
 model_src="$PROJECT_ROOT/weights/$model_dir"
 transcribe_model_src="$PROJECT_ROOT/weights/$transcribe_model_dir"
+assets_src="$PROJECT_ROOT/tests/assets"
 
 device_test_dir="/data/local/tmp/cactus_tests"
 device_model_dir="/data/local/tmp/cactus_models"
+device_assets_dir="/data/local/tmp/cactus_assets"
 
-adb -s "$DEVICE_ID" shell "mkdir -p $device_test_dir $device_model_dir"
+adb -s "$DEVICE_ID" shell "mkdir -p $device_test_dir $device_model_dir $device_assets_dir"
 
 echo "Pushing model weights..."
 adb -s "$DEVICE_ID" push "$model_src" "$device_model_dir/"
 adb -s "$DEVICE_ID" push "$transcribe_model_src" "$device_model_dir/"
+
+echo "Pushing test assets..."
+adb -s "$DEVICE_ID" push "$assets_src" "$device_assets_dir/"
 
 echo "Pushing test executables..."
 for test_exe in "${test_executables[@]}"; do
@@ -267,6 +272,9 @@ done
 echo ""
 echo "Step 5: Running tests..."
 echo "------------------------"
+echo "Using model: $device_model_dir/$model_dir"
+echo "Using transcribe model: $device_model_dir/$transcribe_model_dir"
+echo "Using assets: $device_assets_dir/assets"
 
 for test_exe in "${test_executables[@]}"; do
     test_name=$(basename "$test_exe")
@@ -274,6 +282,7 @@ for test_exe in "${test_executables[@]}"; do
     adb -s "$DEVICE_ID" shell "cd $device_test_dir && \
         export CACTUS_TEST_MODEL=$device_model_dir/$model_dir && \
         export CACTUS_TEST_TRANSCRIBE_MODEL=$device_model_dir/$transcribe_model_dir && \
+        export CACTUS_TEST_ASSETS=$device_assets_dir/assets && \
         ./$test_name"
 done
 

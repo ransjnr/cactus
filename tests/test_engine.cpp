@@ -9,7 +9,7 @@ using namespace EngineTestUtils;
 
 const char* g_model_path = std::getenv("CACTUS_TEST_MODEL");
 const char* g_transcribe_model_path = std::getenv("CACTUS_TEST_TRANSCRIBE_MODEL");
-const char* g_audio_file_path = "../assets/test.wav";
+const char* g_assets_path = std::getenv("CACTUS_TEST_ASSETS");
 const char* g_whisper_prompt = "<|startoftranscript|><|en|><|transcribe|><|notimestamps|>";
 
 const char* g_options = R"({
@@ -154,10 +154,10 @@ bool test_image_input() {
         return false;
     }
 
-    const char* img_path = "../../tests/assets/test_monkey.png";
+    std::string img_path = std::string(g_assets_path) + "/test_monkey.png";
     std::string messages_json = "[{\"role\": \"user\", "
         "\"content\": \"Describe what is happening in this image in two sentences.\", "
-        "\"images\": [\"" + std::string(img_path) + "\"]}]";
+        "\"images\": [\"" + img_path + "\"]}]";
 
     StreamingData stream_data;
     stream_data.model = model;
@@ -360,9 +360,9 @@ bool test_rag() {
         return true;
     }
 
-    const char* corpus_dir = "../../tests/assets/rag_corpus";
+    std::string corpus_dir = std::string(g_assets_path) + "/rag_corpus";
 
-    cactus_model_t model = cactus_init(g_model_path, 2048, corpus_dir);
+    cactus_model_t model = cactus_init(g_model_path, 2048, corpus_dir.c_str());
     if (!model) {
         std::cerr << "[✗] Failed to initialize RAG model with corpus dir\n";
         return false;
@@ -465,8 +465,9 @@ bool run_whisper_test(const char* title, const char* options_json, Predicate che
     StreamingData stream;
     stream.model = model;
 
+    std::string audio_path = std::string(g_assets_path) + "/test.wav";
     std::cout << "Transcript: ";
-    int rc = cactus_transcribe(model, g_audio_file_path, g_whisper_prompt,
+    int rc = cactus_transcribe(model, audio_path.c_str(), g_whisper_prompt,
                                response, sizeof(response), options_json,
                                stream_callback, &stream, nullptr, 0);
 
@@ -501,7 +502,7 @@ static bool test_image_embeddings() {
         return true;
     }
 
-    const char* image_path = "../assets/test_monkey.png";
+    std::string image_path = std::string(g_assets_path) + "/test_monkey.png";
     const size_t buffer_size = 1024 * 1024 * 4;
     std::vector<float> embeddings(buffer_size / sizeof(float));
     size_t embedding_dim = 0;
@@ -513,7 +514,7 @@ static bool test_image_embeddings() {
     }
 
     Timer t;
-    int result = cactus_image_embed(model, image_path, embeddings.data(), buffer_size, &embedding_dim);
+    int result = cactus_image_embed(model, image_path.c_str(), embeddings.data(), buffer_size, &embedding_dim);
     double elapsed = t.elapsed_ms();
 
     cactus_destroy(model);
@@ -550,8 +551,9 @@ static bool test_audio_embeddings() {
         return true;
     }
 
+    std::string audio_path = std::string(g_assets_path) + "/test.wav";
     Timer t;
-    int result = cactus_audio_embed(model, g_audio_file_path, embeddings.data(), buffer_size, &embedding_dim);
+    int result = cactus_audio_embed(model, audio_path.c_str(), embeddings.data(), buffer_size, &embedding_dim);
     double elapsed = t.elapsed_ms();
 
     cactus_destroy(model);

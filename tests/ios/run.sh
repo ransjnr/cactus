@@ -257,6 +257,7 @@ model_dir=$(echo "$MODEL_NAME" | sed 's|.*/||' | tr '[:upper:]' '[:lower:]')
 transcribe_model_dir=$(echo "$TRANSCRIBE_MODEL_NAME" | sed 's|.*/||' | tr '[:upper:]' '[:lower:]')
 model_src="$PROJECT_ROOT/weights/$model_dir"
 transcribe_model_src="$PROJECT_ROOT/weights/$transcribe_model_dir"
+assets_src="$PROJECT_ROOT/tests/assets"
 
 echo "Copying model weights to app bundle..."
 if ! cp -R "$model_src" "$app_path/"; then
@@ -264,6 +265,11 @@ if ! cp -R "$model_src" "$app_path/"; then
 fi
 if ! cp -R "$transcribe_model_src" "$app_path/"; then
     echo "Warning: Could not copy transcribe model weights"
+fi
+
+echo "Copying test assets to app bundle..."
+if ! cp -R "$assets_src" "$app_path/"; then
+    echo "Warning: Could not copy test assets"
 fi
 
 echo ""
@@ -281,12 +287,14 @@ if [ "$device_type" = "simulator" ]; then
     fi
 
     echo "Launching tests..."
+    echo "Using model: $model_dir"
+    echo "Using transcribe model: $transcribe_model_dir"
+    echo "Using assets: assets"
 
     SIMCTL_CHILD_CACTUS_TEST_MODEL="$model_dir" \
     SIMCTL_CHILD_CACTUS_TEST_TRANSCRIBE_MODEL="$transcribe_model_dir" \
+    SIMCTL_CHILD_CACTUS_TEST_ASSETS="assets" \
     xcrun simctl launch --console-pty "$device_uuid" "$bundle_id"
-
-    echo ""
 else
     echo "Installing on: $device_name"
 
@@ -301,9 +309,13 @@ else
 
     echo "Launching tests..."
     echo "(Logs will be fetched from device after completion)"
+    echo "Using model: $model_dir"
+    echo "Using transcribe model: $transcribe_model_dir"
+    echo "Using assets: assets"
 
     DEVICECTL_CHILD_CACTUS_TEST_MODEL="$model_dir" \
     DEVICECTL_CHILD_CACTUS_TEST_TRANSCRIBE_MODEL="$transcribe_model_dir" \
+    DEVICECTL_CHILD_CACTUS_TEST_ASSETS="assets" \
     xcrun devicectl device process launch --device "$device_uuid" "$bundle_id" || true
 
     max_wait=300
@@ -346,6 +358,4 @@ else
     else
         echo "Warning: Could not fetch log file from device"
     fi
-
-    echo ""
 fi

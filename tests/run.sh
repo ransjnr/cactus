@@ -110,8 +110,10 @@ MODEL_DIR=$(echo "$MODEL_NAME" | sed 's|.*/||' | tr '[:upper:]' '[:lower:]')
 TRANSCRIBE_MODEL_DIR=$(echo "$TRANSCRIBE_MODEL_NAME" | sed 's|.*/||' | tr '[:upper:]' '[:lower:]')
 export CACTUS_TEST_MODEL="$PROJECT_ROOT/weights/$MODEL_DIR"
 export CACTUS_TEST_TRANSCRIBE_MODEL="$PROJECT_ROOT/weights/$TRANSCRIBE_MODEL_DIR"
+export CACTUS_TEST_ASSETS="$PROJECT_ROOT/tests/assets"
 echo "Using model path: $CACTUS_TEST_MODEL"
 echo "Using transcribe model path: $CACTUS_TEST_TRANSCRIBE_MODEL"
+echo "Using assets path: $CACTUS_TEST_ASSETS"
 
 echo "Discovering test executables..."
 test_executables=($(find . -maxdepth 1 -name "test_*" -type f | sort))
