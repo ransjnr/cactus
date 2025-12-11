@@ -126,6 +126,9 @@ GraphFile::MappedFile::MappedFile(const std::string& filename)
         close(fd_);
         throw std::runtime_error("Cannot map file: " + filename);
     }
+
+    close(fd_);
+    fd_ = -1;
     
     parse_header();
 }
