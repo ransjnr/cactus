@@ -195,7 +195,7 @@ if ! gem list xcodeproj -i; then
 fi
 
 export PROJECT_ROOT TESTS_ROOT="$tests_root" CACTUS_ROOT="$cactus_root" XCODEPROJ_PATH="$xcodeproj_path" BUNDLE_ID="$bundle_id" DEVELOPMENT_TEAM="$development_team" DEVICE_TYPE="$device_type"
-if ! ruby "$SCRIPT_DIR/setup_project.rb"; then
+if ! ruby "$SCRIPT_DIR/configure_xcode.rb"; then
     echo "Failed to configure Xcode project"
     exit 1
 fi
