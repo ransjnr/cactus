@@ -137,7 +137,7 @@ print_usage() {
     echo "Test options:"
     echo "  --model <name>            Model to use for tests (default: Qwen/Qwen3-0.6B)"
     echo "  --transcribe_model <name> Transcribe model to use (default: openai/whisper-small)"
-    echo "  --android                 Run tests on Android device or emulator via adb"
+    echo "  --android                 Run tests on Android device or emulator"
     echo "  --ios                     Run tests on iOS device or simulator"
     echo ""
     echo "Examples:"

@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --model <name>            Model to use for tests (default: $DEFAULT_MODEL)"
             echo "  --transcribe_model <name> Transcribe model to use (default: $DEFAULT_TRANSCRIBE_MODEL)"
-            echo "  --android                 Run tests on Android device or emulator via adb"
+            echo "  --android                 Run tests on Android device or emulator"
             echo "  --ios                     Run tests on iOS device or simulator"
             echo "  --help, -h                Show this help message"
             exit 0

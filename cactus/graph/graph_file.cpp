@@ -129,7 +129,7 @@ GraphFile::MappedFile::MappedFile(const std::string& filename)
 
     close(fd_);
     fd_ = -1;
-    
+
     parse_header();
 }
 

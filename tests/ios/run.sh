@@ -168,6 +168,11 @@ xcodeproj_path="$SCRIPT_DIR/CactusTest/CactusTest.xcodeproj"
 tests_root="$(cd "$SCRIPT_DIR/.." && pwd)"
 cactus_root="$PROJECT_ROOT/cactus"
 
+project_file="$xcodeproj_path/project.pbxproj"
+template_file="$xcodeproj_path/project.pbxproj.template"
+echo "Copying project template..."
+cp "$template_file" "$project_file"
+
 bundle_id="com.cactus.test.${USER}"
 echo "Using Bundle ID: $bundle_id"
 
@@ -312,10 +317,12 @@ else
     echo "Using transcribe model path: $transcribe_model_dir"
     echo "Using assets path: assets"
 
-    DEVICECTL_CHILD_CACTUS_TEST_MODEL="$model_dir" \
+    launch_output=$(DEVICECTL_CHILD_CACTUS_TEST_MODEL="$model_dir" \
     DEVICECTL_CHILD_CACTUS_TEST_TRANSCRIBE_MODEL="$transcribe_model_dir" \
     DEVICECTL_CHILD_CACTUS_TEST_ASSETS="assets" \
-    xcrun devicectl device process launch --device "$device_uuid" "$bundle_id" || true
+    xcrun devicectl device process launch --device "$device_uuid" "$bundle_id" 2>&1) || true
+
+    echo "$launch_output"
 
     max_wait=300
     elapsed=0
@@ -356,5 +363,16 @@ else
         rm -rf "$temp_log_dir"
     else
         echo "Warning: Could not fetch log file from device"
+    fi
+
+    if echo "$launch_output" | grep -q "FBSOpenApplicationErrorDomain error 3"; then
+        echo ""
+        echo "App launch failed: Untrusted Developer"
+        echo "To trust the developer profile on your device:"
+        echo "  1. Open Settings > General > VPN & Device Management"
+        echo "  2. Under Developer App, tap your Apple ID"
+        echo "  3. Tap Trust and confirm"
+        echo "Then run this script again."
+        echo ""
     fi
 fi
