@@ -291,16 +291,15 @@ inline std::string DeviceManager::registerDevice(const std::string& device_id, c
     std::ostringstream json;
     json << "{";
 
-    bool has_device_data = !metadata.empty();
-    if (has_device_data) {
+    if (!device_id.empty()) {
+        json << "\"device_id\":\"" << generateUUID() << "\"";
+    } else {
         json << "\"device_data\":{"
             << "\"model\":\"" << metadata["model"] << "\",";
         json << "\"os\":\"" << metadata["os"] << "\",";
         json << "\"os_version\":\"" << metadata["os_version"] << "\",";
         json << "\"brand\":\"" << metadata["brand"] << "\"";
         json << "}";
-    } else {
-        json << "\"device_id\":\"" << device_id << "\"";
     }
 
     json << ",\"cactus_pro_key\":\"" << pro_key << "\"";
