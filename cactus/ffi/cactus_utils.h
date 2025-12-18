@@ -470,13 +470,13 @@ extern "C" {
 __attribute__((weak))
 inline const char* register_app(const char* encrypted_data) {
     (void)encrypted_data;
-    return generateUUID().c_str();
+    return cactus::ffi::generateUUID().c_str();
 }
 
 __attribute__((weak))
 inline const char* get_device_id(const char* current_token) {
     (void)current_token;
-    return generateUUID().c_str();
+    return cactus::ffi::generateUUID().c_str();
 }
 }
 #endif
