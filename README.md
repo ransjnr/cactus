@@ -69,7 +69,7 @@ Example response from Gemma3-270m-INT8
 - <sub>**Models:** LFM2-VL-450m & Whisper-Small</sub>
 - <sub>**Decode** = toks/sec, **P/D** = prefill/decode, **VLM** = 256×256 image, **STT** = 30s audio</sub>
 - <sub>**Cactus Pro**: Uses NPU for realtime and large context (Apple for now), scores are marked with *</sub>
-- <sub>Cactus Pro simply needs special weights, email founders@cactuscompute.com</sub>
+- <sub>Cactus Pro needs special weights and a key. Set with `cactus_set_pro_key("your-key")`, email founders@cactuscompute.com</sub>
 - <sub>**INT4 coming**: 1.8x speed, 1.9x smaller files</sub>
 
 | Device | Short Decode | 1k-P/D | 4k-P/D | 4k-P Pro | 4k-RAM | VLM-TTFT | VLM-Dec | VLM-RAM | STT-TTFT | STT-Dec | STT-RAM |
