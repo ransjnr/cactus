@@ -796,7 +796,7 @@ static bool test_pcm_transcription() {
 int main() {
 #ifdef __APPLE__
     cactus_set_telemetry_token("973e4aaa-5ee4-4947-a128-757bb66be75b");
-    cactus_set_pro_key("f9510cdc-38ff-421e-ab8f-f2e6fc2cb8c5"); // email founders@cactuscompute.com
+    cactus_set_pro_key(""); // email founders@cactuscompute.com
 #endif
 
     capture_memory_baseline();
