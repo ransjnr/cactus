@@ -536,6 +536,10 @@ inline void CactusTelemetry::setProjectId(const std::string& project_id) {
 inline void CactusTelemetry::ensureInitialized() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initialized_) {
+        std::string pro_key = DeviceManager::getProKey();
+        if (!pro_key.empty()) {
+            get_device_id(pro_key.c_str());
+        }
 #ifdef CACTUS_TELEMETRY_ENABLED
         device_id_ = DeviceManager::getDeviceId();
         project_id_ = DeviceManager::getProjectId();
@@ -648,29 +652,5 @@ inline void CactusTelemetry::recordTranscription(const std::string& model, bool 
 
 } // namespace ffi
 } // namespace cactus
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-inline void cactus_set_telemetry_enabled(int enabled) {
-    cactus::ffi::CactusTelemetry::getInstance().setEnabled(enabled != 0);
-}
-
-inline void cactus_set_telemetry_token(const char* token) {
-    if (token) {
-        cactus::ffi::CactusTelemetry::getInstance().setTelemetryToken(token);
-    }
-}
-
-inline void cactus_set_pro_key(const char* pro_key) {
-    if (pro_key) {
-        cactus::ffi::DeviceManager::setProKey(pro_key);
-    }
-}
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif // CACTUS_TELEMETRY_H
