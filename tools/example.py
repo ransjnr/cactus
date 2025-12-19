@@ -29,7 +29,7 @@ from cactus_ffi import (
     cactus_set_pro_key
 )
 
-cactus_set_pro_key("")
+cactus_set_pro_key("") # email founders@cactuscompute.com
 
 WEIGHTS_DIR = PROJECT_ROOT / "weights"
 ASSETS_DIR = PROJECT_ROOT / "tests" / "assets"
