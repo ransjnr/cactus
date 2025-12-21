@@ -1,4 +1,5 @@
 #include "index.h"
+#include "kernel/kernel.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -11,23 +12,18 @@ namespace cactus {
 namespace index {
 
     float dot_product(const float *a, const float *b, size_t dim) {
-        float result = 0.0f;
-        for (size_t i = 0; i < dim; ++i) {
-            result += a[i] * b[i];
-        }
+        float result;
+        cactus_matmul_f32(a, b, &result, 1, dim, 1);
         return result;
     }
 
     void normalize(float *v, size_t dim) {
-        float norm = std::sqrt(dot_product(v, v, dim));
-
-        if (norm < 1e-6f) {
-            return;
+        float x = dot_product(v, v, dim);
+        if (x < 1e-10f) {
+            throw std::runtime_error("Cannot normalize zero vector");
         }
-
-        for (size_t i = 0; i < dim; ++i) {
-            v[i] /= norm;
-        }
+        cactus_scalar_op_f32(&x, &x, 1, 0, ScalarOpType::SQRT);
+        cactus_scalar_op_f32(v, v, dim, x, ScalarOpType::DIVIDE);
     }
 
     Index::Index(const std::string& index_path, const std::string& data_path, uint32_t embedding_dim):
@@ -266,12 +262,13 @@ namespace index {
             }
 
             std::vector<SearchResult> results;
-            results.resize(top_results.size());
+            results.reserve(top_results.size());
 
-            for (size_t i = top_results.size(); i-- > 0;) {
-                results[i] = top_results.top();
+            while(!top_results.empty()) {
+                results.emplace_back(top_results.top());
                 top_results.pop();
             }
+            std::reverse(results.begin(), results.end());
 
             all_results.emplace_back(std::move(results));
         }
