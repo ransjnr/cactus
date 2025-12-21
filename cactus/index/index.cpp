@@ -27,18 +27,22 @@ namespace index {
     }
 
     Index::Index(const std::string& index_path, const std::string& data_path, uint32_t embedding_dim):
-        index_path_(index_path), data_path_(data_path), embedding_dim_(embedding_dim) {
+        index_path_(index_path), data_path_(data_path), embedding_dim_(embedding_dim),
+        index_fd_(-1), data_fd_(-1),
+        mapped_index_(nullptr), mapped_data_(nullptr) {
         index_fd_ = open(index_path.c_str(), O_RDWR);
         data_fd_ = open(data_path.c_str(), O_RDWR);
 
         struct stat index_st, data_st;
         if (fstat(index_fd_, &index_st)) {
             close(index_fd_);
+            close(data_fd_);
             throw std::runtime_error("Cannot get index file size: " + index_path);
         }
         index_file_size_ = index_st.st_size;
 
         if (fstat(data_fd_, &data_st)) {
+            close(index_fd_);
             close(data_fd_);
             throw std::runtime_error("Cannot get data file size: " + data_path);
         }
@@ -55,6 +59,7 @@ namespace index {
 
         mapped_data_ = mmap(nullptr, data_file_size_, PROT_READ, MAP_PRIVATE, data_fd_, 0);
         if (mapped_data_ == MAP_FAILED) {
+            munmap(mapped_index_, index_file_size_);
             close(data_fd_);
             throw std::runtime_error("Cannot map file: " + data_path);
         }
@@ -66,6 +71,23 @@ namespace index {
         parse_data_header();
 
         build_doc_id_map();
+    }
+
+    Index::~Index() {
+        if (mapped_index_ != nullptr && mapped_index_ != MAP_FAILED) {
+            madvise(mapped_index_, index_file_size_, MADV_DONTNEED);
+            munmap(mapped_index_, index_file_size_);
+        }
+        if (mapped_data_ != nullptr && mapped_data_ != MAP_FAILED) {
+            madvise(mapped_data_, data_file_size_, MADV_DONTNEED);
+            munmap(mapped_data_, data_file_size_);
+        }
+        if (index_fd_ != -1) {
+            close(index_fd_);
+        }
+        if (data_fd_ != -1) {
+            close(data_fd_);
+        }
     }
 
     void Index::add_documents(const std::vector<Document>& documents) {
@@ -94,13 +116,11 @@ namespace index {
             data_offsets.emplace_back(data_offset);
 
             const DataEntry entry {
-                static_cast<uint8_t>(doc.id.size()),
                 static_cast<uint16_t>(doc.content.size()),
                 static_cast<uint16_t>(doc.metadata.size())
             };
 
             if (write(data_fd, &entry, sizeof(DataEntry)) != sizeof(DataEntry)
-                || write(data_fd, doc.id.data(), doc.id.size()) != static_cast<ssize_t>(doc.id.size())
                 || write(data_fd, doc.content.data(), doc.content.size()) != static_cast<ssize_t>(doc.content.size())
                 || write(data_fd, doc.metadata.data(), doc.metadata.size()) != static_cast<ssize_t>(doc.metadata.size())) {
                 close(index_fd);
@@ -108,17 +128,20 @@ namespace index {
                 throw std::runtime_error("Failed to write document entry");
             }
 
-            uint32_t entry_size = sizeof(DataEntry) + doc.id.size() + doc.content.size() + doc.metadata.size();
+            uint32_t entry_size = sizeof(DataEntry) + doc.content.size() + doc.metadata.size();
             data_sizes.emplace_back(entry_size);
             data_offset += entry_size;
         }
 
         lseek(index_fd, 0, SEEK_END);
 
+        doc_id_map_.reserve(doc_id_map_.size() + documents.size());
+
         for (size_t i = 0; i < documents.size(); ++i) {
             const auto& doc = documents[i];
 
             const IndexEntry entry {
+                doc.id,
                 data_offsets[i],
                 data_sizes[i],
                 0
@@ -167,13 +190,13 @@ namespace index {
         header->num_documents = num_documents_;
     }
 
-    void Index::delete_documents(const std::vector<std::string>& doc_ids) {
+    void Index::delete_documents(const std::vector<uint32_t>& doc_ids) {
         validate_doc_ids(doc_ids);
 
         char* index_ptr = static_cast<char*>(mapped_index_);
         char* entries = index_ptr + sizeof(IndexHeader);
 
-        for (const auto& doc_id: doc_ids) {
+        for (uint32_t doc_id : doc_ids) {
             uint32_t i = doc_id_map_.at(doc_id);
             IndexEntry& entry = *reinterpret_cast<IndexEntry*>(entries + i * IndexEntry::size(embedding_dim_));
 
@@ -182,7 +205,7 @@ namespace index {
         }
     }
 
-    std::vector<Document> Index::get_documents(const std::vector<std::string>& doc_ids) {
+    std::vector<Document> Index::get_documents(const std::vector<uint32_t>& doc_ids) {
         validate_doc_ids(doc_ids);
 
         std::vector<Document> results;
@@ -192,7 +215,7 @@ namespace index {
         const char* entries = index_ptr + sizeof(IndexHeader);
         const char* data_ptr = static_cast<const char*>(mapped_data_);
 
-        for (const auto& doc_id: doc_ids) {
+        for (uint32_t doc_id : doc_ids) {
             uint32_t i = doc_id_map_.at(doc_id);
             const IndexEntry& entry = *reinterpret_cast<const IndexEntry*>(entries + i * IndexEntry::size(embedding_dim_));
             const DataEntry* data_entry = reinterpret_cast<const DataEntry*>(data_ptr + entry.data_offset);
@@ -228,23 +251,24 @@ namespace index {
 
         const char* index_ptr = static_cast<const char*>(mapped_index_);
         const char* entries = index_ptr + sizeof(IndexHeader);
-        const char* data_ptr = static_cast<const char*>(mapped_data_);
 
         auto cmp = [](const SearchResult& a, const SearchResult& b) {
             return a.score > b.score;
         };
 
+        const size_t entry_size = IndexEntry::size(embedding_dim_);
+
         for (const auto& normalized_embedding : normalized_embeddings) {
             std::priority_queue<SearchResult, std::vector<SearchResult>, decltype(cmp)> top_results(cmp);
 
             for (uint32_t i = 0; i < num_documents_; ++i) {
-                const IndexEntry& entry = *reinterpret_cast<const IndexEntry*>(entries + i * IndexEntry::size(embedding_dim_));
-                const float* entry_embedding = entry.embedding();
+                const IndexEntry& entry = *reinterpret_cast<const IndexEntry*>(entries + i * entry_size);
 
                 if (entry.flags & 0x1) {
                     continue;
                 }
 
+                const float* entry_embedding = entry.embedding();
                 float score = dot_product(normalized_embedding.data(), entry_embedding, embedding_dim_);
 
                 if (score < options.score_threshold) {
@@ -252,12 +276,10 @@ namespace index {
                 }
 
                 if (top_results.size() < options.top_k) {
-                    const DataEntry* data_entry = reinterpret_cast<const DataEntry*>(data_ptr + entry.data_offset);
-                    top_results.emplace(std::string(data_entry->doc_id(), data_entry->doc_id_len), score);
+                    top_results.emplace(entry.doc_id, score);
                 } else if (score > top_results.top().score) {
                     top_results.pop();
-                    const DataEntry* data_entry = reinterpret_cast<const DataEntry*>(data_ptr + entry.data_offset);
-                    top_results.emplace(std::string(data_entry->doc_id(), data_entry->doc_id_len), score);
+                    top_results.emplace(entry.doc_id, score);
                 }
             }
 
@@ -336,7 +358,8 @@ namespace index {
     void Index::build_doc_id_map() {
         const char* index_ptr = static_cast<const char*>(mapped_index_);
         const char* entries = index_ptr + sizeof(IndexHeader);
-        const char* data_ptr = static_cast<const char*>(mapped_data_);
+
+        doc_id_map_.reserve(num_documents_);
 
         for (uint32_t i = 0; i < num_documents_; ++i) {
             const IndexEntry& entry = *reinterpret_cast<const IndexEntry*>(entries + i * IndexEntry::size(embedding_dim_));
@@ -345,10 +368,7 @@ namespace index {
                 continue;
             }
 
-            const DataEntry* data_entry = reinterpret_cast<const DataEntry*>(data_ptr + entry.data_offset);
-            const std::string doc_id = std::string(data_entry->doc_id(), data_entry->doc_id_len);
-
-            doc_id_map_[doc_id] = i;
+            doc_id_map_[entry.doc_id] = i;
         }
     }
 
@@ -357,57 +377,45 @@ namespace index {
             throw std::runtime_error("Documents vector is empty");
         }
 
-        std::unordered_set<std::string> seen_ids;
+        std::unordered_set<uint32_t> seen_ids;
         for (const auto& doc : documents) {
-            if (doc.id.empty()) {
-                throw std::runtime_error("Document ID cannot be empty");
-            }
-
-            if (doc.id.size() > 255) {
-                throw std::runtime_error("Document ID too long (max 255 bytes): " + doc.id);
-            }
-
             if (doc.content.size() > 65535) {
-                throw std::runtime_error("Document content too long (max 65535 bytes) for ID: " + doc.id);
+                throw std::runtime_error("Document content too long (max 65535 bytes) for ID: " + std::to_string(doc.id));
             }
 
             if (doc.metadata.size() > 65535) {
-                throw std::runtime_error("Document metadata too long (max 65535 bytes) for ID: " + doc.id);
+                throw std::runtime_error("Document metadata too long (max 65535 bytes) for ID: " + std::to_string(doc.id));
             }
 
             if (doc.embedding.size() != embedding_dim_) {
-                throw std::runtime_error("Document embedding dimension mismatch for ID: " + doc.id);
+                throw std::runtime_error("Document embedding dimension mismatch for ID: " + std::to_string(doc.id));
             }
 
             if (seen_ids.find(doc.id) != seen_ids.end()) {
-                throw std::runtime_error("Duplicate document ID in input: " + doc.id);
+                throw std::runtime_error("Duplicate document ID in input: " + std::to_string(doc.id));
             }
             seen_ids.insert(doc.id);
 
             if (doc_id_map_.find(doc.id) != doc_id_map_.end()) {
-                throw std::runtime_error("Document ID already exists: " + doc.id);
+                throw std::runtime_error("Document ID already exists: " + std::to_string(doc.id));
             }
         }
     }
 
-    void Index::validate_doc_ids(const std::vector<std::string>& doc_ids) {
+    void Index::validate_doc_ids(const std::vector<uint32_t>& doc_ids) {
         if (doc_ids.empty()) {
             throw std::runtime_error("Document IDs vector is empty");
         }
 
-        std::unordered_set<std::string> seen_ids;
-        for (const auto& doc_id : doc_ids) {
-            if (doc_id.empty()) {
-                throw std::runtime_error("Document ID cannot be empty");
-            }
-
+        std::unordered_set<uint32_t> seen_ids;
+        for (uint32_t doc_id : doc_ids) {
             if (seen_ids.find(doc_id) != seen_ids.end()) {
-                throw std::runtime_error("Duplicate document ID in input: " + doc_id);
+                throw std::runtime_error("Duplicate document ID in input: " + std::to_string(doc_id));
             }
             seen_ids.insert(doc_id);
 
             if (doc_id_map_.find(doc_id) == doc_id_map_.end()) {
-                throw std::runtime_error("Document ID not found: " + doc_id);
+                throw std::runtime_error("Document ID not found: " + std::to_string(doc_id));
             }
         }
     }

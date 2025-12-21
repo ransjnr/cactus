@@ -11,14 +11,14 @@ namespace index {
     constexpr uint32_t VERSION = 1;
 
     struct Document {
-        std::string id;
+        uint32_t id;
         std::vector<float> embedding;
         std::string content;
         std::string metadata;
     };
 
     struct SearchResult {
-        std::string doc_id;
+        uint32_t doc_id;
         float score;
     };
 
@@ -30,10 +30,16 @@ namespace index {
     class Index {
         public:
             Index(const std::string& index_path, const std::string& data_path, uint32_t embedding_dim);
+            ~Index();
+
+            Index(const Index&) = delete;
+            Index& operator=(const Index&) = delete;
+            Index(Index&&) = delete;
+            Index& operator=(Index&&) = delete;
 
             void add_documents(const std::vector<Document>& documents);
-            void delete_documents(const std::vector<std::string>& doc_ids);
-            std::vector<Document> get_documents(const std::vector<std::string>& doc_ids);
+            void delete_documents(const std::vector<uint32_t>& doc_ids);
+            std::vector<Document> get_documents(const std::vector<uint32_t>& doc_ids);
             std::vector<std::vector<SearchResult>> query(const std::vector<std::vector<float>>& embeddings, const SearchOptions& options);
 
         private:
@@ -45,6 +51,7 @@ namespace index {
             };
 
             struct IndexEntry {
+                uint32_t doc_id;
                 uint64_t data_offset;
                 uint32_t data_size;
                 uint8_t flags; // bit 0: tombstone
@@ -64,16 +71,11 @@ namespace index {
             };
 
             struct DataEntry {
-                uint8_t doc_id_len;
                 uint16_t content_len;
                 uint16_t metadata_len;
 
-                const char* doc_id() const {
-                    return reinterpret_cast<const char*>(this + 1);
-                }
-
                 const char* content() const {
-                    return doc_id() + doc_id_len;
+                    return reinterpret_cast<const char*>(this + 1);
                 }
 
                 const char* metadata() const {
@@ -81,7 +83,7 @@ namespace index {
                 }
 
                 size_t total_size() const {
-                    return sizeof(DataEntry) + doc_id_len + content_len + metadata_len;
+                    return sizeof(DataEntry) + content_len + metadata_len;
                 }
             };
 
@@ -89,9 +91,9 @@ namespace index {
             void parse_data_header();
             void build_doc_id_map();
             void validate_documents(const std::vector<Document>& documents);
-            void validate_doc_ids(const std::vector<std::string>& doc_ids);
+            void validate_doc_ids(const std::vector<uint32_t>& doc_ids);
 
-            std::unordered_map<std::string, uint32_t> doc_id_map_;
+            std::unordered_map<uint32_t, uint32_t> doc_id_map_;
 
             std::string index_path_, data_path_;
             uint32_t embedding_dim_;

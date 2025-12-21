@@ -122,13 +122,13 @@ bool test_add_single_document(uint32_t embedding_dim) {
         cactus::index::Index index(index_path, data_path, dim);
 
         std::vector<cactus::index::Document> docs = {
-            {"doc1", random_embedding(dim), "content1", "metadata1"}
+            {1, random_embedding(dim), "content1", "metadata1"}
         };
 
         index.add_documents(docs);
 
-        auto retrieved = index.get_documents({"doc1"});
-        return retrieved.size() == 1 && retrieved[0].id == "doc1";
+        auto retrieved = index.get_documents({1});
+        return retrieved.size() == 1 && retrieved[0].id == 1;
     };
     return run_isolated_test("add_single_document", embedding_dim, test);
 }
@@ -138,9 +138,9 @@ bool test_add_multiple_documents(uint32_t embedding_dim) {
         cactus::index::Index index(index_path, data_path, dim);
 
         std::vector<cactus::index::Document> docs;
-        for (int i = 0; i < 10; ++i) {
+        for (uint32_t i = 0; i < 10; ++i) {
             docs.push_back({
-                "doc" + std::to_string(i),
+                i,
                 random_embedding(dim),
                 "content" + std::to_string(i),
                 "metadata" + std::to_string(i)
@@ -149,11 +149,11 @@ bool test_add_multiple_documents(uint32_t embedding_dim) {
 
         index.add_documents(docs);
 
-        auto retrieved = index.get_documents({"doc0", "doc5", "doc9"});
+        auto retrieved = index.get_documents({0, 5, 9});
         return retrieved.size() == 3 &&
-               retrieved[0].id == "doc0" &&
-               retrieved[1].id == "doc5" &&
-               retrieved[2].id == "doc9";
+               retrieved[0].id == 0 &&
+               retrieved[1].id == 5 &&
+               retrieved[2].id == 9;
     };
     return run_isolated_test("add_multiple_documents", embedding_dim, test);
 }
@@ -176,7 +176,7 @@ bool test_add_large_content(uint32_t embedding_dim) {
 
         std::string large_content(1024 * 1024, 'x');
         std::vector<cactus::index::Document> docs = {
-            {"doc1", random_embedding(dim), large_content, "metadata1"}
+            {1, random_embedding(dim), large_content, "metadata1"}
         };
 
         return expect_exception([&]() {
@@ -191,14 +191,14 @@ bool test_delete_single_document(uint32_t embedding_dim) {
         cactus::index::Index index(index_path, data_path, dim);
 
         std::vector<cactus::index::Document> docs = {
-            {"doc1", random_embedding(dim), "content1", "metadata1"},
-            {"doc2", random_embedding(dim), "content2", "metadata2"}
+            {1, random_embedding(dim), "content1", "metadata1"},
+            {2, random_embedding(dim), "content2", "metadata2"}
         };
         index.add_documents(docs);
-        index.delete_documents({"doc1"});
+        index.delete_documents({1});
 
         return expect_exception([&]() {
-            index.get_documents({"doc1"});
+            index.get_documents({1});
         });
     };
     return run_isolated_test("delete_single_document", embedding_dim, test);
@@ -212,8 +212,8 @@ bool test_query_basic(uint32_t embedding_dim) {
         auto embedding2 = random_embedding(dim);
 
         std::vector<cactus::index::Document> docs = {
-            {"doc1", embedding1, "content1", "metadata1"},
-            {"doc2", embedding2, "content2", "metadata2"}
+            {1, embedding1, "content1", "metadata1"},
+            {2, embedding2, "content2", "metadata2"}
         };
         index.add_documents(docs);
 
@@ -221,7 +221,7 @@ bool test_query_basic(uint32_t embedding_dim) {
         options.top_k = 1;
 
         auto results = index.query({embedding1}, options);
-        return results.size() == 1 && results[0].size() == 1 && results[0][0].doc_id == "doc1";
+        return results.size() == 1 && results[0].size() == 1 && results[0][0].doc_id == 1;
     };
     return run_isolated_test("query_basic", embedding_dim, test);
 }
@@ -231,8 +231,8 @@ bool test_query_topk(uint32_t embedding_dim) {
         cactus::index::Index index(index_path, data_path, dim);
 
         std::vector<cactus::index::Document> docs;
-        for (int i = 0; i < 10; ++i) {
-            docs.push_back({"doc" + std::to_string(i), random_embedding(dim), "content", "meta"});
+        for (uint32_t i = 0; i < 10; ++i) {
+            docs.push_back({i, random_embedding(dim), "content", "meta"});
         }
         index.add_documents(docs);
 
@@ -250,9 +250,9 @@ bool test_stress_many_documents(uint32_t embedding_dim) {
         cactus::index::Index index(index_path, data_path, dim);
 
         std::vector<cactus::index::Document> docs;
-        for (int i = 0; i < 1000; ++i) {
+        for (uint32_t i = 0; i < 1000; ++i) {
             docs.push_back({
-                "doc" + std::to_string(i),
+                i,
                 random_embedding(dim),
                 "content" + std::to_string(i),
                 "meta" + std::to_string(i)
@@ -261,8 +261,8 @@ bool test_stress_many_documents(uint32_t embedding_dim) {
 
         index.add_documents(docs);
 
-        auto retrieved = index.get_documents({"doc500"});
-        return retrieved.size() == 1 && retrieved[0].id == "doc500";
+        auto retrieved = index.get_documents({500});
+        return retrieved.size() == 1 && retrieved[0].id == 500;
     };
     return run_isolated_test("stress_many_documents", embedding_dim, test);
 }
@@ -293,7 +293,7 @@ void run_benchmarks(uint32_t embedding_dim, uint32_t num_docs) {
     docs.reserve(num_docs);
     for (uint32_t i = 0; i < num_docs; ++i) {
         docs.push_back({
-            "doc" + std::to_string(i),
+            i,
             random_embedding(embedding_dim),
             "content_" + std::to_string(i),
             "meta_" + std::to_string(i)
@@ -330,7 +330,7 @@ void run_benchmarks(uint32_t embedding_dim, uint32_t num_docs) {
     new_docs.reserve(num_adds);
     for (uint32_t i = 0; i < num_adds; ++i) {
         new_docs.push_back({
-            "new_doc" + std::to_string(i),
+            num_docs + i,
             random_embedding(embedding_dim),
             "new_content_" + std::to_string(i),
             "new_meta_" + std::to_string(i)
@@ -366,10 +366,10 @@ void run_benchmarks(uint32_t embedding_dim, uint32_t num_docs) {
     std::cout << "\n[BENCHMARK: Get - Retrieve documents by ID]\n";
 
     const int num_gets = std::min(1000, static_cast<int>(num_docs / 10));
-    std::vector<std::string> get_doc_ids;
+    std::vector<uint32_t> get_doc_ids;
     get_doc_ids.reserve(num_gets);
     for (int i = 0; i < num_gets; ++i) {
-        get_doc_ids.push_back("doc" + std::to_string(i * (num_docs / num_gets)));
+        get_doc_ids.push_back(i * (num_docs / num_gets));
     }
 
     start = std::chrono::high_resolution_clock::now();
@@ -387,10 +387,10 @@ void run_benchmarks(uint32_t embedding_dim, uint32_t num_docs) {
     std::cout << "\n[BENCHMARK: Delete - Remove documents]\n";
 
     const int num_deletes = std::min(1000, static_cast<int>(num_docs / 10));
-    std::vector<std::string> delete_doc_ids;
+    std::vector<uint32_t> delete_doc_ids;
     delete_doc_ids.reserve(num_deletes);
     for (int i = 0; i < num_deletes; ++i) {
-        delete_doc_ids.push_back("doc" + std::to_string(i));
+        delete_doc_ids.push_back(i);
     }
 
     start = std::chrono::high_resolution_clock::now();
