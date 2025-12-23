@@ -1810,16 +1810,12 @@ void run_benchmarks(size_t embedding_dim, uint32_t num_docs) {
     auto start = std::chrono::high_resolution_clock::now();
     cactus_index_t index = cactus_index_init(dir_path.c_str(), embedding_dim);
     auto end = std::chrono::high_resolution_clock::now();
-    auto init_duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
 
-    const size_t batch_size = 1000;
     std::vector<int> all_ids;
-    std::vector<const char*> all_docs;
-    std::vector<const char*> all_metas;
+    std::vector<const char*> all_docs, all_metas;
     std::vector<std::vector<float>> all_embeddings;
     std::vector<const float*> all_embedding_ptrs;
-    std::vector<std::string> doc_strings;
-    std::vector<std::string> meta_strings;
+    std::vector<std::string> doc_strings, meta_strings;
 
     all_ids.reserve(num_docs);
     doc_strings.reserve(num_docs);
@@ -1840,13 +1836,12 @@ void run_benchmarks(size_t embedding_dim, uint32_t num_docs) {
     }
 
     start = std::chrono::high_resolution_clock::now();
-    for (size_t i = 0; i < num_docs; i += batch_size) {
-        size_t count = std::min(batch_size, num_docs - i);
+    for (size_t i = 0; i < num_docs; i += 1000) {
+        size_t count = std::min(size_t(1000), num_docs - i);
         cactus_index_add(index, all_ids.data() + i, all_docs.data() + i, all_metas.data() + i,
                         all_embedding_ptrs.data() + i, count, embedding_dim);
     }
     end = std::chrono::high_resolution_clock::now();
-    auto populate_duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
 
     cactus_index_destroy(index);
 
@@ -1857,10 +1852,8 @@ void run_benchmarks(size_t embedding_dim, uint32_t num_docs) {
 
     const uint32_t num_adds = std::min(1000u, num_docs / 10);
     std::vector<int> add_ids;
-    std::vector<std::string> add_doc_strings;
-    std::vector<std::string> add_meta_strings;
-    std::vector<const char*> add_docs;
-    std::vector<const char*> add_metas;
+    std::vector<std::string> add_doc_strings, add_meta_strings;
+    std::vector<const char*> add_docs, add_metas;
     std::vector<std::vector<float>> add_embeddings;
     std::vector<const float*> add_embedding_ptrs;
 
@@ -1939,20 +1932,10 @@ void run_benchmarks(size_t embedding_dim, uint32_t num_docs) {
     end = std::chrono::high_resolution_clock::now();
     auto delete_duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
 
-    struct stat st_before;
-    std::string index_file_path = dir_path + "/index.bin";
-    stat(index_file_path.c_str(), &st_before);
-    size_t index_size_before = st_before.st_size;
-
     start = std::chrono::high_resolution_clock::now();
     cactus_index_compact(index2);
     end = std::chrono::high_resolution_clock::now();
     auto compact_duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
-
-    struct stat st_after;
-    stat(index_file_path.c_str(), &st_after);
-    size_t index_size_after = st_after.st_size;
-    size_t space_reclaimed = index_size_before - index_size_after;
 
     std::cout << "\n╔══════════════════════════════════════════╗\n"
               << "║     Benchmark Summary                    ║\n"
