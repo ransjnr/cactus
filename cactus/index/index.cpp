@@ -20,7 +20,7 @@ namespace index {
 
     void normalize(__fp16 *v, size_t dim) {
         __fp16 x = dot_product(v, v, dim);
-        if (x < 1e-10f) {
+        if (x < 1e-6f) {
             throw std::runtime_error("Cannot normalize zero vector");
         }
         cactus_scalar_op_f16(&x, &x, 1, 0, ScalarOpType::SQRT);
@@ -522,13 +522,6 @@ namespace index {
 
         munmap(temp_index_map, new_index_size);
         munmap(temp_data_map, new_data_size);
-        close(temp_index_fd);
-        close(temp_data_fd);
-
-        munmap(mapped_index_, index_file_size_);
-        munmap(mapped_data_, data_file_size_);
-        close(index_fd_);
-        close(data_fd_);
 
         std::string backup_index = index_path_ + ".backup";
         std::string backup_data = data_path_ + ".backup";
@@ -536,6 +529,14 @@ namespace index {
         if (access(backup_index.c_str(), F_OK) == 0 || access(backup_data.c_str(), F_OK) == 0) {
             cleanup_and_throw("Backup files already exist, previous compaction may have failed");
         }
+
+        close(temp_index_fd);
+        close(temp_data_fd);
+
+        munmap(mapped_index_, index_file_size_);
+        munmap(mapped_data_, data_file_size_);
+        close(index_fd_);
+        close(data_fd_);
 
         if (rename(index_path_.c_str(), backup_index.c_str()) != 0) {
             cleanup_and_throw("Failed to backup index file");
