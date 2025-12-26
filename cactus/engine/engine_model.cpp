@@ -758,9 +758,6 @@ double Model::score_tokens_window_logprob(
     if (hidden_buf.shape.size() != 2) {
         throw std::runtime_error("Expected hidden to be rank-2 [L, hidden_dim]");
     }
-    const size_t hidden_dim = hidden_buf.shape[1];
-
-
     const size_t first_pos = start - ctx_begin - 1;
     const size_t hidden_slice = gb->slice(hidden_node, /*axis=*/0, first_pos, target_len);
     bool transpose_w = true;
