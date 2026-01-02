@@ -32,7 +32,7 @@ static void to_db(
     reference = std::max(min_value, reference);
     const float log_ref = std::log10(reference);
 
-    CactusThreading::parallel_for(size, 10000, [&](size_t start, size_t end) {
+    CactusThreading::parallel_for(size, CactusThreading::Thresholds::ALL_REDUCE, [&](size_t start, size_t end) {
         for (size_t i = start; i < end; i++) {
             float value = std::max(min_value, spectrogram[i]);
             spectrogram[i] = multiplier * (std::log10(value) - log_ref);
@@ -45,7 +45,7 @@ static void to_db(
         }
 
         float max_db = CactusThreading::parallel_reduce<std::function<float(size_t, size_t)>, float, std::function<float(float, float)>>(
-            size, 10000,
+            size, CactusThreading::Thresholds::ALL_REDUCE,
             [&](size_t start, size_t end) {
                 float local_max = -std::numeric_limits<float>::infinity();
                 for (size_t i = start; i < end; i++) {
@@ -58,7 +58,7 @@ static void to_db(
         );
 
         float min_db = max_db - *db_range;
-        CactusThreading::parallel_for(size, 10000, [&](size_t start, size_t end) {
+        CactusThreading::parallel_for(size, CactusThreading::Thresholds::ALL_REDUCE, [&](size_t start, size_t end) {
             for (size_t i = start; i < end; i++) {
                 spectrogram[i] = std::max(min_db, spectrogram[i]);
             }
@@ -382,7 +382,7 @@ static void compute_spectrogram_f32(
 
     std::vector<float> temp_spectrogram(num_frames * num_frequency_bins);
 
-    CactusThreading::parallel_for(num_frames, 100, [&](size_t start_frame, size_t end_frame) {
+    CactusThreading::parallel_for(num_frames, CactusThreading::Thresholds::SCALAR_EXPENSIVE, [&](size_t start_frame, size_t end_frame) {
         std::vector<float> local_buffer(actual_fft_length);
         std::vector<float> local_complex_frequencies(num_frequency_bins * 2);
 
@@ -438,7 +438,7 @@ static void compute_spectrogram_f32(
     });
 
     if (mel_filters != nullptr) {
-        CactusThreading::parallel_for_2d(num_mel_bins, num_frames, 1000, [&](size_t m, size_t t) {
+        CactusThreading::parallel_for_2d(num_mel_bins, num_frames, CactusThreading::Thresholds::AXIS_REDUCE, [&](size_t m, size_t t) {
             float sum = 0.0f;
             for (size_t f = 0; f < num_frequency_bins; f++) {
                 sum += mel_filters[m * num_frequency_bins + f] * temp_spectrogram[t * num_frequency_bins + f];
@@ -446,7 +446,7 @@ static void compute_spectrogram_f32(
             spectrogram[m * num_frames + t] = std::max(mel_floor, sum);
         });
     } else {
-        CactusThreading::parallel_for_2d(num_frames, num_frequency_bins, 1000, [&](size_t t, size_t f) {
+        CactusThreading::parallel_for_2d(num_frames, num_frequency_bins, CactusThreading::Thresholds::AXIS_REDUCE, [&](size_t t, size_t f) {
             spectrogram[f * num_frames + t] = temp_spectrogram[t * num_frequency_bins + f];
         });
     }
@@ -455,13 +455,13 @@ static void compute_spectrogram_f32(
         const size_t total_elements = spectrogram_bins * num_frames;
 
         if (std::strcmp(log_mel, "log") == 0) {
-            CactusThreading::parallel_for(total_elements, 10000, [&](size_t start, size_t end) {
+            CactusThreading::parallel_for(total_elements, CactusThreading::Thresholds::ALL_REDUCE, [&](size_t start, size_t end) {
                 for (size_t i = start; i < end; i++) {
                     spectrogram[i] = std::log(spectrogram[i]);
                 }
             });
         } else if (std::strcmp(log_mel, "log10") == 0) {
-            CactusThreading::parallel_for(total_elements, 10000, [&](size_t start, size_t end) {
+            CactusThreading::parallel_for(total_elements, CactusThreading::Thresholds::ALL_REDUCE, [&](size_t start, size_t end) {
                 for (size_t i = start; i < end; i++) {
                     spectrogram[i] = std::log10(spectrogram[i]);
                 }

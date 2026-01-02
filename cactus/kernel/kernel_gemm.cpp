@@ -5,6 +5,15 @@
 #include <algorithm>
 #include <cmath>
 
+// Thread-local buffer pool to avoid per-call allocations in cactus_matmul_int
+namespace {
+    struct GemmBuffers {
+        std::vector<int8_t> A_quant;
+        std::vector<float> A_scales;
+    };
+    static thread_local GemmBuffers gemm_buffers;
+}
+
 static void cactus_matmul_f16_worker(
     const __fp16* a,
     const __fp16* b_transposed,
@@ -128,13 +137,13 @@ void cactus_matmul_f16(
 ) {
     constexpr size_t TILE_M = 4;
     const size_t num_row_blocks = (M + TILE_M - 1) / TILE_M;
-    
+
     CactusThreading::parallel_for(num_row_blocks, CactusThreading::Thresholds::SCALAR_EXPENSIVE,
         [=](size_t start_block, size_t end_block) {
             for (size_t block_idx = start_block; block_idx < end_block; ++block_idx) {
                 size_t start_row = block_idx * TILE_M;
                 size_t end_row = std::min(start_row + TILE_M, M);
-                
+
                 cactus_matmul_f16_worker(
                     a, b_transposed, c,
                     M, K, N,
@@ -235,19 +244,27 @@ void cactus_matmul_int(
     constexpr size_t TILE_N = 4;
     const size_t K_aligned = ((K + 31) / 32) * 32;
 
-    std::vector<int8_t> A_quant(M * K_aligned);
-    std::vector<float> A_scales(M);
+    // Use pooled buffers to avoid per-call allocation
+    const size_t quant_size = M * K_aligned;
+    if (gemm_buffers.A_quant.size() < quant_size) {
+        gemm_buffers.A_quant.resize(quant_size);
+    }
+    if (gemm_buffers.A_scales.size() < M) {
+        gemm_buffers.A_scales.resize(M);
+    }
+    int8_t* A_quant = gemm_buffers.A_quant.data();
+    float* A_scales = gemm_buffers.A_scales.data();
 
     CactusThreading::parallel_for(M, CactusThreading::Thresholds::ELEMENT_WISE,
-        [&](size_t m_start, size_t m_end) {
+        [&, A_quant, A_scales](size_t m_start, size_t m_end) {
             for (size_t m = m_start; m < m_end; m++) {
                 A_scales[m] = quantize_row_fp16_to_int8(
-                    A + m * K, A_quant.data() + m * K_aligned, K);
+                    A + m * K, A_quant + m * K_aligned, K);
             }
         });
 
     CactusThreading::parallel_for_2d_tiled(M, N, TILE_M, TILE_N,
-        [&](size_t m_start, size_t m_end, size_t n_start, size_t n_end) {
+        [&, A_quant, A_scales](size_t m_start, size_t m_end, size_t n_start, size_t n_end) {
             size_t actual_m = m_end - m_start;
             size_t actual_n = n_end - n_start;
 
@@ -265,7 +282,7 @@ void cactus_matmul_int(
                 }
 
                 for (size_t mi = 0; mi < actual_m; mi++) {
-                    const int8_t* a_ptr = A_quant.data() + (m_start + mi) * K_aligned + k_base;
+                    const int8_t* a_ptr = A_quant + (m_start + mi) * K_aligned + k_base;
                     int8x16_t a_vec0 = vld1q_s8(a_ptr);
                     int8x16_t a_vec1 = vld1q_s8(a_ptr + 16);
                     float a_scale = A_scales[m_start + mi];

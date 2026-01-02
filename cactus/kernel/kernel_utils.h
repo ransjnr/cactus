@@ -139,45 +139,40 @@ namespace CactusThreading {
         return pool;
     }
     
-    inline size_t get_optimal_thread_count(size_t total_work, size_t min_work_per_thread) {
-        if (total_work < min_work_per_thread) return 1;
-        size_t pool_size = get_thread_pool().num_workers();
-        return std::min(pool_size, 
-                       std::max(static_cast<size_t>(1), total_work / min_work_per_thread));
-    }
-    
-    struct Thresholds {
+    struct ParallelConfig {
+        size_t min_work_gate;  
+        size_t work_per_thread; 
 
+        constexpr ParallelConfig(size_t gate, size_t per_thread)
+            : min_work_gate(gate), work_per_thread(per_thread) {}
+    };
+
+    inline size_t get_optimal_thread_count(size_t total_work, ParallelConfig config) {
+        if (total_work < config.min_work_gate) return 1;
+
+        size_t pool_size = get_thread_pool().num_workers();
+        size_t num_threads = (total_work + config.work_per_thread - 1) / config.work_per_thread;
+        return std::min(pool_size, std::max(static_cast<size_t>(1), num_threads));
+    }
+
+    struct Thresholds {
         #if defined(__ANDROID__)
-        static constexpr size_t ELEMENT_WISE = 5000;
-        static constexpr size_t AXIS_REDUCE = 1000;
-        static constexpr size_t ALL_REDUCE = 10000;
-        static constexpr size_t SCALAR_BASIC = 30000;
-        static constexpr size_t SCALAR_EXPENSIVE = 10000;
-        static constexpr size_t ATTENTION = 512;
-        static constexpr size_t GEMM_TILED = 20000; 
-        static constexpr size_t GEMM_SMALL = 64 * 64 * 64;
-        static constexpr size_t GEMM_MEDIUM = 256 * 256 * 256;
-        static constexpr size_t GEMM_TILE_M = 64;
-        static constexpr size_t GEMM_TILE_N = 64;
-        static constexpr size_t GEMM_TILE_M_SMALL = 32;
-        static constexpr size_t GEMM_TILE_N_SMALL = 32;
-        #else // iOS
-        static constexpr size_t ELEMENT_WISE = 5000;
-        static constexpr size_t AXIS_REDUCE = 1000;
-        static constexpr size_t ALL_REDUCE = 10000;
-        static constexpr size_t SCALAR_BASIC = 5000;
-        static constexpr size_t SCALAR_EXPENSIVE = 2500;
-        static constexpr size_t ATTENTION = 4;
-        static constexpr size_t GEMM_TILED = 4;  
-        static constexpr size_t GEMM_SMALL = 64 * 64 * 64;
-        static constexpr size_t GEMM_MEDIUM = 256 * 256 * 256;
-        static constexpr size_t GEMM_TILE_M = 64;
-        static constexpr size_t GEMM_TILE_N = 64;
-        static constexpr size_t GEMM_TILE_M_SMALL = 32;
-        static constexpr size_t GEMM_TILE_N_SMALL = 32;
+        static constexpr ParallelConfig ATTENTION{64, 32};
+        static constexpr ParallelConfig GEMM_TILED{32, 16};
+        static constexpr ParallelConfig ELEMENT_WISE{5000, 2500};
+        static constexpr ParallelConfig AXIS_REDUCE{1000, 500};
+        static constexpr ParallelConfig ALL_REDUCE{10000, 5000};
+        static constexpr ParallelConfig SCALAR_BASIC{30000, 15000};
+        static constexpr ParallelConfig SCALAR_EXPENSIVE{10000, 5000};
+        #else // Apple
+        static constexpr ParallelConfig ATTENTION{32, 16};
+        static constexpr ParallelConfig GEMM_TILED{16, 8};
+        static constexpr ParallelConfig ELEMENT_WISE{5000, 2500};
+        static constexpr ParallelConfig AXIS_REDUCE{1000, 500};
+        static constexpr ParallelConfig ALL_REDUCE{10000, 5000};
+        static constexpr ParallelConfig SCALAR_BASIC{5000, 2500};
+        static constexpr ParallelConfig SCALAR_EXPENSIVE{2500, 1250};
         #endif
-        static constexpr size_t L2_CACHE_SIZE = 256 * 1024;
     };
     
     class TaskHandle {
@@ -225,10 +220,10 @@ namespace CactusThreading {
     };
     
     template<typename WorkFunc>
-    TaskHandle parallel_for(size_t total_work, size_t threshold, WorkFunc work_func, bool wait = true) {
-        const size_t num_threads = get_optimal_thread_count(total_work, threshold);
-        TaskHandle handle(!wait);  
-        
+    TaskHandle parallel_for(size_t total_work, ParallelConfig config, WorkFunc work_func, bool wait = true) {
+        const size_t num_threads = get_optimal_thread_count(total_work, config);
+        TaskHandle handle(!wait);
+
         if (num_threads == 1) {
             if (wait) {
                 work_func(0, total_work);
@@ -240,10 +235,10 @@ namespace CactusThreading {
             }));
             return handle;
         }
-        
+
         auto& pool = get_thread_pool();
         const size_t work_per_thread = total_work / num_threads;
-        
+
         for (size_t t = 0; t < num_threads; ++t) {
             handle.add_future(pool.enqueue([work_func, t, num_threads, work_per_thread, total_work]() {
                 const size_t start_idx = t * work_per_thread;
@@ -251,17 +246,17 @@ namespace CactusThreading {
                 work_func(start_idx, end_idx);
             }));
         }
-        
+
         if (wait) {
             handle.wait();
         }
         return handle;
     }
-    
+
     template<typename WorkFunc>
-    void parallel_for_2d(size_t outer_size, size_t inner_size, size_t threshold, WorkFunc work_func) {
+    void parallel_for_2d(size_t outer_size, size_t inner_size, ParallelConfig config, WorkFunc work_func) {
         const size_t total_work = outer_size * inner_size;
-        parallel_for(total_work, threshold, [&](size_t start_idx, size_t end_idx) {
+        parallel_for(total_work, config, [&](size_t start_idx, size_t end_idx) {
             for (size_t work_idx = start_idx; work_idx < end_idx; ++work_idx) {
                 const size_t outer = work_idx / inner_size;
                 const size_t inner = work_idx % inner_size;
@@ -269,11 +264,11 @@ namespace CactusThreading {
             }
         });
     }
-    
+
     template<typename WorkFunc, typename ResultType, typename CombineFunc>
-    ResultType parallel_reduce(size_t total_work, size_t threshold, 
+    ResultType parallel_reduce(size_t total_work, ParallelConfig config,
                               WorkFunc work_func, ResultType init_value, CombineFunc combine_func) {
-        const size_t num_threads = get_optimal_thread_count(total_work, threshold);
+        const size_t num_threads = get_optimal_thread_count(total_work, config);
         
         if (num_threads == 1) {
             return work_func(0, total_work);
@@ -298,26 +293,7 @@ namespace CactusThreading {
         }
         return result;
     }
-    
-    inline size_t compute_gemm_parallelism(size_t M, size_t K, size_t N, size_t element_size) {
-        size_t total_ops = M * K * N;
-        
-        if (total_ops < Thresholds::GEMM_SMALL) return 1;
-        
-        if (total_ops < Thresholds::GEMM_MEDIUM) {
-            return std::min(static_cast<size_t>(2), get_thread_pool().num_workers());
-        }
-        
-        size_t bytes_accessed = (M * K + K * N + M * N) * element_size;
-        size_t cache_tiles = (bytes_accessed + Thresholds::L2_CACHE_SIZE - 1) / Thresholds::L2_CACHE_SIZE;
-        
-        size_t compute_threads = std::sqrt(static_cast<double>(total_ops) / Thresholds::GEMM_SMALL);
-        size_t memory_threads = cache_tiles;
-        
-        size_t optimal = std::min(compute_threads, memory_threads);
-        return std::min(optimal, get_thread_pool().num_workers());
-    }
-    
+
     template<typename WorkFunc>
     void parallel_for_2d_tiled(size_t rows, size_t cols, size_t tile_rows, size_t tile_cols, WorkFunc work_func) {
         size_t num_row_tiles = (rows + tile_rows - 1) / tile_rows;
@@ -328,16 +304,17 @@ namespace CactusThreading {
             for (size_t tile_idx = start_tile; tile_idx < end_tile; ++tile_idx) {
                 size_t tile_row = tile_idx / num_col_tiles;
                 size_t tile_col = tile_idx % num_col_tiles;
-                
+
                 size_t row_start = tile_row * tile_rows;
                 size_t row_end = std::min(row_start + tile_rows, rows);
                 size_t col_start = tile_col * tile_cols;
                 size_t col_end = std::min(col_start + tile_cols, cols);
-                
+
                 work_func(row_start, row_end, col_start, col_end);
             }
         });
     }
 }
+
 
 #endif // KERNEL_UTILS_H 

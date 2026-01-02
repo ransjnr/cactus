@@ -21,7 +21,7 @@ void cactus_conv1d_causal_depthwise_f16(
     const size_t in_bs  = L * C;
     const size_t out_bs = L * C;
 
-    CactusThreading::parallel_for_2d(N, C, 4, [&](size_t n, size_t c) {
+    CactusThreading::parallel_for_2d(N, C, CactusThreading::Thresholds::ATTENTION, [&](size_t n, size_t c) {
         const __fp16* Xb = input  + n * in_bs;
         __fp16*       Yb = output + n * out_bs;
 
