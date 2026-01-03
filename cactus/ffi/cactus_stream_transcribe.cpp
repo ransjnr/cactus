@@ -3,7 +3,6 @@
 #include <chrono>
 #include <cstring>
 
-using namespace cactus::engine;
 using namespace cactus::ffi;
 
 static std::string escape_json_string(const std::string& s) {
