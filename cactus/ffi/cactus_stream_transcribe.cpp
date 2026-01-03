@@ -146,6 +146,8 @@ struct CactusStreamTranscribeHandle {
     std::string last_n_words;
     std::string previous_transcription;
     size_t previous_audio_buffer_size;
+
+    char transcribe_response_buffer[8192];
 };
 
 extern "C" {
@@ -168,6 +170,7 @@ cactus_stream_transcribe_t cactus_stream_transcribe_init(cactus_model_t model) {
         auto* stream_handle = new CactusStreamTranscribeHandle();
         stream_handle->model_handle = model_handle;
         stream_handle->previous_audio_buffer_size = 0;
+        stream_handle->transcribe_response_buffer[0] = '\0';
 
         CACTUS_LOG_INFO("stream_transcribe_init",
             "Stream transcription initialized for model: " << model_handle->model_name);
@@ -248,8 +251,6 @@ int cactus_stream_transcribe_process(
             confirmation_threshold
         );
 
-        char response_buffer_[4096];
-
         std::string prompt = "<|startofprev|>"
             + handle->last_n_words
             + "<|startoftranscript|><|en|><|transcribe|><|notimestamps|>";
@@ -258,8 +259,8 @@ int cactus_stream_transcribe_process(
             handle->model_handle,
             nullptr,
             prompt.c_str(),
-            response_buffer_,
-            sizeof(response_buffer_),
+            handle->transcribe_response_buffer,
+            sizeof(handle->transcribe_response_buffer),
             nullptr,
             nullptr,
             nullptr,
@@ -275,7 +276,7 @@ int cactus_stream_transcribe_process(
             return -1;
         }
 
-        std::string json_str(response_buffer_);
+        std::string json_str(handle->transcribe_response_buffer);
         std::string response = extract_json_string_value(json_str, "response");
         std::string json_response = "{\"success\":true,\"confirmed\":\"" +
             escape_json_string(handle->confirmed) + "\",\"partial\":\"" +
