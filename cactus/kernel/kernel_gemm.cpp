@@ -271,10 +271,16 @@ void cactus_matmul_int(
             for (size_t g = 0; g < num_groups; g++) {
                 size_t k_base = g * group_size;
 
-                float b_scale[TILE_N];
-                for (size_t ni = 0; ni < actual_n; ni++) {
-                    b_scale[ni] = (float)B_scales[(n_start + ni) * num_groups + g];
+                float combined_scale[TILE_M][TILE_N];
+                for (size_t mi = 0; mi < actual_m; mi++) {
+                    float a_scale = A_scales[m_start + mi];
+                    for (size_t ni = 0; ni < actual_n; ni++) {
+                        float b_scale = (float)B_scales[(n_start + ni) * num_groups + g];
+                        combined_scale[mi][ni] = a_scale * b_scale;
+                    }
                 }
+
+                int32_t group_acc[TILE_M][TILE_N] = {{0}};
 
                 for (size_t k_offset = 0; k_offset < group_size; k_offset += 32) {
                     int8x16_t b_vec0[TILE_N], b_vec1[TILE_N];
@@ -287,14 +293,19 @@ void cactus_matmul_int(
                         const int8_t* a_ptr = A_quant + (m_start + mi) * K_aligned + k_base + k_offset;
                         int8x16_t a_vec0 = vld1q_s8(a_ptr);
                         int8x16_t a_vec1 = vld1q_s8(a_ptr + 16);
-                        float a_scale = A_scales[m_start + mi];
 
                         for (size_t ni = 0; ni < actual_n; ni++) {
                             int32x4_t sum = vdupq_n_s32(0);
                             sum = vdotq_s32(sum, a_vec0, b_vec0[ni]);
                             sum = vdotq_s32(sum, a_vec1, b_vec1[ni]);
-                            acc[mi][ni] += (float)vaddvq_s32(sum) * (a_scale * b_scale[ni]);
+                            group_acc[mi][ni] += vaddvq_s32(sum);
                         }
+                    }
+                }
+
+                for (size_t mi = 0; mi < actual_m; mi++) {
+                    for (size_t ni = 0; ni < actual_n; ni++) {
+                        acc[mi][ni] += (float)group_acc[mi][ni] * combined_scale[mi][ni];
                     }
                 }
             }
