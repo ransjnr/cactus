@@ -392,7 +392,7 @@ void compute_precision_cast_node(GraphNode& node, const std::vector<std::unique_
                     for (size_t col = 0; col < K; ++col) {
                         size_t idx = row * K + col;
                         size_t group_idx = col / group_size;
-                        float scale = static_cast<float>(scales[row * num_groups + group_idx]);
+                        float scale = static_cast<float>(scales[group_idx * N + row]);
                         dst[idx] = static_cast<float>(src[idx]) * scale;
                     }
                 }
@@ -431,7 +431,7 @@ void compute_precision_cast_node(GraphNode& node, const std::vector<std::unique_
                     for (size_t col = 0; col < K; ++col) {
                         size_t idx = row * K + col;
                         size_t group_idx = col / group_size;
-                        float scale = static_cast<float>(scales[row * num_groups + group_idx]);
+                        float scale = static_cast<float>(scales[group_idx * N + row]);
                         dst[idx] = static_cast<__fp16>(src[idx] * scale);
                     }
                 }

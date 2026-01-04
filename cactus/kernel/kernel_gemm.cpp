@@ -275,7 +275,7 @@ void cactus_matmul_int(
                 for (size_t mi = 0; mi < actual_m; mi++) {
                     float a_scale = A_scales[m_start + mi];
                     for (size_t ni = 0; ni < actual_n; ni++) {
-                        float b_scale = (float)B_scales[(n_start + ni) * num_groups + g];
+                        float b_scale = (float)B_scales[g * N + (n_start + ni)];
                         combined_scale[mi][ni] = a_scale * b_scale;
                     }
                 }
