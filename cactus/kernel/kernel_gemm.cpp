@@ -273,7 +273,7 @@ void cactus_matmul_int(
 
                 float b_scale[TILE_N];
                 for (size_t ni = 0; ni < actual_n; ni++) {
-                    b_scale[ni] = (float)B_scales[g * N + (n_start + ni)];
+                    b_scale[ni] = (float)B_scales[(n_start + ni) * num_groups + g];
                 }
 
                 for (size_t k_offset = 0; k_offset < group_size; k_offset += 32) {

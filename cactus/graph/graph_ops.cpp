@@ -147,7 +147,7 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
                         std::memcpy(output + i * element_size, tensor_data + idx * element_size, bytes_per_element);
                         if (is_grouped) {
                             for (size_t g = 0; g < num_groups; g++) {
-                                gathered_scales[g * num_indices + i] = src_scales[g * first_dim + idx];
+                                gathered_scales[i * num_groups + g] = src_scales[idx * num_groups + g];
                             }
                         }
                     }
@@ -161,7 +161,7 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
                         std::memcpy(output + i * element_size, tensor_data + idx * element_size, bytes_per_element);
                         if (is_grouped) {
                             for (size_t g = 0; g < num_groups; g++) {
-                                gathered_scales[g * num_indices + i] = src_scales[g * first_dim + idx];
+                                gathered_scales[i * num_groups + g] = src_scales[idx * num_groups + g];
                             }
                         }
                     }
@@ -260,9 +260,9 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
                     __fp16* sliced_scales = reinterpret_cast<__fp16*>(node.output_buffer.owned_scales.get());
                     const __fp16* input_scales = input_buffer.scales_as_fp16();
 
-                    for (size_t g = 0; g < num_groups; g++) {
-                        for (size_t i = 0; i < slice_length; i++) {
-                            sliced_scales[g * slice_length + i] = input_scales[g * axis_size + (slice_start + i)];
+                    for (size_t i = 0; i < slice_length; i++) {
+                        for (size_t g = 0; g < num_groups; g++) {
+                            sliced_scales[i * num_groups + g] = input_scales[(slice_start + i) * num_groups + g];
                         }
                     }
 
@@ -331,7 +331,7 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
                         __fp16* out_row = output + i * hidden_dim;
 
                         for (size_t g = 0; g < num_groups; g++) {
-                            float scale = (float)scales[g * vocab_size + idx];
+                            float scale = (float)scales[idx * num_groups + g];
                             size_t k_start = g * group_size;
                             size_t k_end = std::min(k_start + group_size, hidden_dim);
                             for (size_t k = k_start; k < k_end; k++) {
@@ -638,7 +638,7 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
                         for (size_t col = 0; col < K_total; ++col) {
                             size_t idx = row * K_total + col;
                             size_t group_idx = col / group_size;
-                            float scale = static_cast<float>(scales[group_idx * W0 + row]);
+                            float scale = static_cast<float>(scales[row * num_groups + group_idx]);
                             W_fp16[idx] = static_cast<__fp16>(W_int8[idx] * scale);
                         }
                     }
@@ -712,7 +712,7 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
                             for (size_t col = 0; col < K_total; ++col) {
                                 size_t idx = row * K_total + col;
                                 size_t group_idx = col / group_size;
-                                float scale = static_cast<float>(scales[group_idx * C_out + row]);
+                                float scale = static_cast<float>(scales[row * num_groups + group_idx]);
                                 W_fp16[idx] = static_cast<__fp16>(W_int8[idx] * scale);
                             }
                         }
