@@ -128,7 +128,9 @@ bool Model::init_internal(CactusGraph* gb, const std::string& model_folder, size
         attention_scale_ = 1.0f / std::sqrt(static_cast<float>(config_.attention_head_dim));
     }
 
-    Precision cache_precision = Precision::INT8;  // INT8 with per-head scales for 48% bandwidth reduction
+    Precision cache_precision = (config_.model_type == Config::ModelType::WHISPER)
+                               ? Precision::FP16
+                               : Precision::INT8;
     kv_cache_.init(config_.num_layers, context_size, config_.attention_kv_heads, config_.attention_head_dim, cache_precision);
 
     size_t window_size = std::min(context_size, size_t(512));

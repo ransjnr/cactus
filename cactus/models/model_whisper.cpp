@@ -273,26 +273,49 @@ size_t WhisperModel::build_decoder_self_attention(CactusGraph* gb, size_t input,
     auto k_4d = gb->reshape(k, {1, seq_new, num_kv_heads, head_dim});
     auto v_4d = gb->reshape(v, {1, seq_new, num_kv_heads, head_dim});
 
+    size_t final_k = k_4d;
+    size_t final_v = v_4d;
+
+    if (use_cache && !kv_cache_.is_empty()) {
+        auto k_view = kv_cache_.get_key_view(layer_idx);
+        auto v_view = kv_cache_.get_value_view(layer_idx);
+
+        if (!k_view.ptr1 || !v_view.ptr1) {
+            throw std::runtime_error("KV cache view is empty but kv_cache_.is_empty()==false");
+        }
+
+        size_t cache_len = kv_cache_.current_seq_len;
+
+        size_t cache_k_node = gb->input(
+            {1, cache_len, num_kv_heads, head_dim},
+            kv_cache_.precision
+        );
+        size_t cache_v_node = gb->input(
+            {1, cache_len, num_kv_heads, head_dim},
+            kv_cache_.precision
+        );
+
+        if (k_view.ptr2 == nullptr && v_view.ptr2 == nullptr) {
+            gb->set_input(cache_k_node, k_view.ptr1, kv_cache_.precision);
+            gb->set_input(cache_v_node, v_view.ptr1, kv_cache_.precision);
+        } else {
+            gb->set_input(cache_k_node, kv_cache_.get_key_ptr(layer_idx), kv_cache_.precision);
+            gb->set_input(cache_v_node, kv_cache_.get_value_ptr(layer_idx), kv_cache_.precision);
+        }
+
+        final_k = gb->concat(cache_k_node, k_4d, 1);
+        final_v = gb->concat(cache_v_node, v_4d, 1);
+    }
+
     if (use_cache) {
+        cache_k_output_nodes_[layer_idx] = final_k;
+        cache_v_output_nodes_[layer_idx] = final_v;
+    } else {
         cache_k_output_nodes_[layer_idx] = k_4d;
         cache_v_output_nodes_[layer_idx] = v_4d;
     }
 
-    size_t attn_out_4d;
-
-    if (use_cache && !kv_cache_.is_empty()) {
-        attn_out_4d = gb->attention_int8_hybrid(
-            q_4d, k_4d, v_4d,
-            attention_scale_, position_offset,
-            kv_cache_.get_keys_int8(layer_idx),
-            kv_cache_.get_values_int8(layer_idx),
-            kv_cache_.get_key_scales(layer_idx),
-            kv_cache_.get_value_scales(layer_idx),
-            kv_cache_.current_seq_len, num_kv_heads, head_dim
-        );
-    } else {
-        attn_out_4d = gb->attention(q_4d, k_4d, v_4d, attention_scale_, position_offset);
-    }
+    auto attn_out_4d = gb->attention(q_4d, final_k, final_v, attention_scale_, position_offset);
     auto attn_out    = gb->reshape(attn_out_4d, {seq_new, num_heads * head_dim});
 
     auto output = gb->matmul(attn_out, layer.decoder_self_attn_output_weight, true, backend);
