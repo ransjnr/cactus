@@ -18,14 +18,26 @@ string(STRIP "${CACTUS_VERSION}" CACTUS_VERSION)
 
 if(APPLE)
     set(CMAKE_OSX_ARCHITECTURES "arm64")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -arch arm64 -pthread -Wall -Wextra -pedantic -O3 -Wno-missing-field-initializers")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -arch arm64 -march=armv8.2-a+fp16+simd+dotprod+i8mm -pthread -Wall -Wextra -pedantic -O3 -Wno-missing-field-initializers")
+    add_compile_definitions(
+        __ARM_NEON=1
+        __ARM_FEATURE_FP16_VECTOR_ARITHMETIC=1
+        __ARM_FEATURE_DOTPROD=1
+        __ARM_FEATURE_MATMUL_INT8=1
+    )
 
     enable_language(OBJCXX)
     find_package(CURL REQUIRED)
     find_library(COREML_FRAMEWORK CoreML REQUIRED)
     find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
 else()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8.2-a+fp16+simd+dotprod -pthread -Wall -Wextra -pedantic -O3 -Wno-missing-field-initializers")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8.2-a+fp16+simd+dotprod+i8mm -pthread -Wall -Wextra -pedantic -O3 -Wno-missing-field-initializers")
+    add_compile_definitions(
+        __ARM_NEON=1
+        __ARM_FEATURE_FP16_VECTOR_ARITHMETIC=1
+        __ARM_FEATURE_DOTPROD=1
+        __ARM_FEATURE_MATMUL_INT8=1
+    )
 endif()
 
 file(GLOB ENGINE_SOURCES "engine/*.cpp")

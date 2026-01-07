@@ -2,7 +2,7 @@
 
 Cross-platform & energy-efficient kernels, runtime and AI inference engine for mobile devices. 
 
-## Cactus Graph 
+# Cactus Graph 
 Cactus Graph is a general numerical computing framework for implementing 
 any model, like PyTorch for mobile devices.
 
@@ -29,7 +29,7 @@ graph.hard_reset();
 
 ```
 
-## Cactus Engine
+# Cactus Engine
 Cactus Engine is an AI inference engine with OpenAI-compatible APIs built on top of Cactus Graphs.
 
 ```cpp
@@ -66,29 +66,28 @@ Example response from Gemma3-270m-INT8
 }
 ```
 
-## INT8 Performance
+# Performance
 
 - <sub>**Models:** LFM2-VL-450m & Whisper-Small</sub>
 - <sub>**Decode** = toks/sec, **P/D** = prefill/decode, **VLM** = 256×256 image, **STT** = 30s audio</sub>
 - <sub>**Cactus Pro**: Uses NPU for realtime and large context (Apple for now), scores are marked with *</sub>
-- <sub>**INT4 coming**: 1.8x speed, 1.9x smaller files</sub>
 
-| Device | Short Decode | 1k-P/D | 4k-P/D | 4k-P Pro | 4k-RAM | VLM-TTFT | VLM-Dec | VLM-RAM | STT-TTFT | STT-Dec | STT-RAM |
-|--------|--------|--------|--------|----------|--------|----------|---------|---------|----------|---------|---------|
-| Mac M4 Pro | 173 | 1574/115 | 1089/100 | - | 122MB | 0.4s/0.1s* | 168 | 112MB | 1.7s/0.2s* | 83 | 142MB |
-| Mac M3 Pro | 150 | 1540/109 | 890/93 | - | 121MB | 0.5s/0.1s* | 149 | 113MB | 2.9s/0.4s* | 78 | 140MB |
-| iPad/Mac M4 | 129 | 793/82 | 507/64 | - | 80MB | 0.5s/0.1s* | 113 | 145MB | 2.4s0.3s* | 60 | 131MB |
-| iPad/Mac M3 | 112 | 786/78 | 446/60 | - | 81MB | 0.6s/0.1s* | 111 | 154MB | 4.2s/0.7s* | 58 | 142MB |
-| iPhone 17 Pro | 136 | 810/105 | 628/84 | - | - | 1.1s/0.1s* | 120 | - | 3.0s/0.6s* | - | - |
-| iPhone 16 Pro | 114 | 716/98 | 580/81 | - | - | 1.3s/0.2s* | 101 | - | 3.5s/0.7s* | 75 | - |
-| iPhone 15 Pro | 99 | 549/86 | 530/75 | - | - | 1.5s/0.3s* | 92 | - | 3.8s/0.8s* | 70 | - |
-| Galaxy S25 Ultra | 91 | 230/63 | 173/57 | - | 128MB | 1.4s | 58 | - | - | - | - |
-| Nothing 3 | 56 | 167/49 | 160/46 | - | - | 1.7s | 54 | - | 8.5s | 55 | - |
-| Nothing 3a | 31 | 114/26 | 108/24 | - | - | 2.4s | 29 | - | - | - | - |
-| Raspberry Pi 5 | 24 | 192/28 | - | - | - | 2.3s | 23 | - | 21s | 16 | - |
+| Device | Short Decode | 1k-P/D | 4k-P/D | 4k-RAM | VLM-TTFT | VLM-Dec | VLM-RAM | STT-TTFT | STT-Dec | STT-RAM |
+|--------|--------|--------|--------|--------|----------|---------|---------|----------|---------|---------|
+| Mac M4 Pro | 173 | 1574/115 | 1089/100 | 122MB | 0.4s/0.1s* | 168 | 112MB | 1.7s/0.2s* | 83 | 142MB |
+| Mac M3 Pro | 150 | 1540/109 | 890/93 | 121MB | 0.5s/0.1s* | 149 | 113MB | 2.9s/0.4s* | 78 | 140MB |
+| iPad/Mac M4 | 129 | 793/82 | 507/64 | 80MB | 0.5s/0.1s* | 113 | 145MB | 2.4s0.3s* | 60 | 131MB |
+| iPad/Mac M3 | 112 | 786/78 | 446/60 | 81MB | 0.6s/0.1s* | 111 | 154MB | 4.2s/0.7s* | 58 | 142MB |
+| iPhone 17 Pro | 136 | 810/105 | 628/84 | - | 1.1s/0.1s* | 120 | - | 3.0s/0.6s* | - | - |
+| iPhone 16 Pro | 114 | 716/98 | 580/81 | - | 1.3s/0.2s* | 101 | - | 3.5s/0.7s* | 75 | - |
+| iPhone 15 Pro | 99 | 549/86 | 530/75 | - | 1.5s/0.3s* | 92 | - | 3.8s/0.8s* | 70 | - |
+| Galaxy S25 Ultra | 91 | 230/63 | 173/57 | 128MB | 1.4s | 58 | - | - | - | - |
+| Nothing 3 | 56 | 167/49 | 160/46 | - | 1.7s | 54 | - | 8.5s | 55 | - |
+| Nothing 3a | 31 | 114/26 | 108/24 | - | 2.4s | 29 | - | - | - | - |
+| Raspberry Pi 5 | 24 | 192/28 | - | - | 2.3s | 23 | - | 21s | 16 | - |
 
 
-## Supported models (INT8)
+# Supported models 
 
 | Model | Compressed Size | Completion | Tool Call | Vision | Embed | Speech | Pro
 |-------|--------------------|-------------------|----------------|------|------|------|------|
@@ -104,21 +103,57 @@ Example response from Gemma3-270m-INT8
 | nomic-ai/nomic-embed-text-v2-moe | 533MB  | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ |
 | google/gemma-3-1b-it | 642MB  | ✓ | ✗ | ✗ | ✗ | ✗ | Apple |
 | openai/whisper-medium | 646MB  | ✗ | ✗ | ✗ | ✓ | ✓ | Apple |
-| LiquidAI/LFM2-1.2B | 722MB  | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
+| LiquidAI/LFM2.5-1.2B-Instruct | 722MB  | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
 | LiquidAI/LFM2-1.2B-RAG | 722MB  | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
 | LiquidAI/LFM2-1.2B-Tool | 722MB  | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
-| LiquidAI/LFM2-VL-1.6B | 1440MB  | ✓ | ✗ | ✓ | ✓ | ✗ | Apple |
+| LiquidAI/LFM2.5-VL-1.6B | 1440MB  | ✓ | ✗ | ✓ | ✓ | ✗ | Apple |
 | Qwen/Qwen3-1.7B | 1161MB  | ✓ | ✓ | ✗ | ✓ | ✗ | Apple |
 | HuggingFaceTB/SmolLM2-1.7B-Instruct | 1161MB  | ✓ | ✗ | ✗ | ✓ | ✗ | ✗ |
 
-## Using this repo on Mac
 
-- Clone repo and run `source ./setup`.
-- Setup is automatic and usage instructions printed after.
-- Run `cactus --help` to see guides anytime.
-- Remember to run `source ./setup` in any new terminal.
+# Using this repo on a Mac
 
-## Using in your apps
+```bash
+git clone https://github.com/cactus-compute/cactus && cd cactus && source ./setup
+```
+
+- <sub> `[model]` is a HuggingFace name from the table above (default: `google/gemma-3-270m-it`)</sub>
+- <sub> Common flags: `--precision INT4|INT8|FP16` (default: INT4), `--token <hf_token>`</sub>
+- <sub>Always run `source ./setup` in any new terminal.</sub>
+
+| Command | Description |
+|---------|-------------|
+| `cactus run [model]` | Opens playground (auto downloads model) |
+| `cactus download [model]` | Downloads model to `./weights` |
+| `cactus convert [model] [dir]` | Converts model, supports LoRA merging (`--lora <path>`) |
+| `cactus build` | Builds for ARM (`--apple` or `--android`) |
+| `cactus test` | Runs tests (`--ios` / `--android` for device testing) |
+| `cactus clean` | Removes build artifacts |
+| `cactus --help` | Shows all commands and flags |
+
+# Python Package
+
+Cactus python package is auto installed for researchers and testing.
+
+```python
+from cactus_ffi import cactus_init, cactus_complete, cactus_destroy
+
+model = cactus_init("weights/lfm2-vl-450m", context_size=2048)
+
+messages = json.dumps([{"role": "user", "content": "What is 2+2?"}])
+response = cactus_complete(model, messages) # returns JSON
+
+cactus_destroy(model)
+```
+
+Setup and full example:
+```bash
+cactus build
+cactus download LiquidAI/LFM2-VL-450M
+python tools/example.py
+```
+
+# Using in your apps
 
 - [Kotlin Multiplatform SDK](https://github.com/cactus-compute/cactus-kotlin)
 - [Flutter SDK](https://github.com/cactus-compute/cactus-flutter)
@@ -126,7 +161,7 @@ Example response from Gemma3-270m-INT8
 - [Swift SDK](https://github.com/mhayes853/swift-cactus)
 - [Rust SDK](https://github.com/mrsarac/cactus-rs)
 
-## Try demo apps
+# Try demo apps
 
 - [iOS Demo](https://apps.apple.com/gb/app/cactus-chat/id6744444212)
 - [Android Demo](https://play.google.com/store/apps/details?id=com.rshemetsubuser.myapp)

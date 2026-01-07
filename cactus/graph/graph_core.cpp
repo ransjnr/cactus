@@ -354,21 +354,29 @@ namespace ValidationUtils {
 
 void compute_reshape_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map) {
     const auto& input_buffer = nodes[node_index_map.at(node.input_ids[0])]->output_buffer;
-    
+
+    if (input_buffer.is_packed_int4()) {
+        throw std::runtime_error("Reshape operation not supported on packed INT4 data");
+    }
+
     size_t input_total_elements = input_buffer.total_size;
     size_t output_total_elements = node.output_buffer.total_size;
-    
+
     if (input_total_elements != output_total_elements) {
-        throw std::runtime_error("Reshape operation: input elements (" + std::to_string(input_total_elements) + 
+        throw std::runtime_error("Reshape operation: input elements (" + std::to_string(input_total_elements) +
                                 ") must match output elements (" + std::to_string(output_total_elements) + ")");
     }
-    
+
     std::memcpy(node.output_buffer.get_data(), input_buffer.get_data(), input_buffer.byte_size);
 }
 
 void compute_precision_cast_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map) {
     const auto& input_node = *nodes[node_index_map.at(node.input_ids[0])];
-    
+
+    if (input_node.output_buffer.is_packed_int4()) {
+        throw std::runtime_error("Precision cast not supported on packed INT4 data");
+    }
+
     if (input_node.output_buffer.precision == node.output_buffer.precision) {
         std::memcpy(node.output_buffer.get_data(), input_node.output_buffer.get_data(), input_node.output_buffer.byte_size);
         return;
@@ -387,11 +395,12 @@ void compute_precision_cast_node(GraphNode& node, const std::vector<std::unique_
             if (shape.size() == 2) {
                 size_t N = shape[0];
                 size_t K = shape[1];
+                size_t num_groups = K / group_size;
                 for (size_t row = 0; row < N; ++row) {
                     for (size_t col = 0; col < K; ++col) {
                         size_t idx = row * K + col;
                         size_t group_idx = col / group_size;
-                        float scale = static_cast<float>(scales[group_idx * N + row]);
+                        float scale = static_cast<float>(scales[row * num_groups + group_idx]);
                         dst[idx] = static_cast<float>(src[idx]) * scale;
                     }
                 }
@@ -425,11 +434,12 @@ void compute_precision_cast_node(GraphNode& node, const std::vector<std::unique_
             if (shape.size() == 2) {
                 size_t N = shape[0];
                 size_t K = shape[1];
+                size_t num_groups = K / group_size;
                 for (size_t row = 0; row < N; ++row) {
                     for (size_t col = 0; col < K; ++col) {
                         size_t idx = row * K + col;
                         size_t group_idx = col / group_size;
-                        float scale = static_cast<float>(scales[group_idx * N + row]);
+                        float scale = static_cast<float>(scales[row * num_groups + group_idx]);
                         dst[idx] = static_cast<__fp16>(src[idx] * scale);
                     }
                 }

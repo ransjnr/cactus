@@ -44,16 +44,52 @@ inline int32x4_t accum_dot(int32x4_t acc, int8x16_t a, int8x16_t b) {
 }
 #endif
 
+// I8MM support: Apple Clang requires target attribute, Android/GCC uses feature macro
+#if defined(__ARM_FEATURE_MATMUL_INT8)
+inline int32x4_t accum_matmul(int32x4_t acc, int8x16_t a, int8x16_t b) {
+    return vmmlaq_s32(acc, a, b);
+}
+#define CACTUS_HAS_I8MM 1
+#elif defined(__APPLE__) && defined(__aarch64__)
+__attribute__((target("i8mm")))
+inline int32x4_t accum_matmul(int32x4_t acc, int8x16_t a, int8x16_t b) {
+    return vmmlaq_s32(acc, a, b);
+}
+#define CACTUS_HAS_I8MM 1
+#endif
+
 inline float16x8_t accum_f16_dot(float16x8_t acc, float16x8_t a_low, float16x8_t a_high, 
                                  float16x8_t b_low, float16x8_t b_high) {
     acc = vfmaq_f16(acc, a_low, b_low);
     return vfmaq_f16(acc, a_high, b_high);
 }
 
-inline float32x4_t accum_f32_dot(float32x4_t acc, float32x4_t a_low, float32x4_t a_high, 
+inline float32x4_t accum_f32_dot(float32x4_t acc, float32x4_t a_low, float32x4_t a_high,
                                   float32x4_t b_low, float32x4_t b_high) {
     acc = vfmaq_f32(acc, a_low, b_low);
     return vfmaq_f32(acc, a_high, b_high);
+}
+
+inline int8x16_t unpack_int4_lo(uint8x16_t packed) {
+    uint8x16_t lo = vandq_u8(packed, vdupq_n_u8(0x0F));
+    uint8x16_t sign_mask = vcgtq_u8(lo, vdupq_n_u8(7));  
+    uint8x16_t correction = vandq_u8(sign_mask, vdupq_n_u8(16));
+    return vreinterpretq_s8_u8(vsubq_u8(lo, correction));
+}
+
+inline int8x16_t unpack_int4_hi(uint8x16_t packed) {
+    uint8x16_t hi = vshrq_n_u8(packed, 4);
+    uint8x16_t sign_mask = vcgtq_u8(hi, vdupq_n_u8(7));
+    uint8x16_t correction = vandq_u8(sign_mask, vdupq_n_u8(16));
+    return vreinterpretq_s8_u8(vsubq_u8(hi, correction));
+}
+
+inline void unpack_int4_to_int8x32(uint8x16_t packed, int8x16_t& out_lo, int8x16_t& out_hi) {
+    int8x16_t lo_nibbles = unpack_int4_lo(packed);
+    int8x16_t hi_nibbles = unpack_int4_hi(packed);
+    int8x16x2_t interleaved = vzipq_s8(lo_nibbles, hi_nibbles);
+    out_lo = interleaved.val[0];
+    out_hi = interleaved.val[1];
 }
 
 namespace CactusThreading {
@@ -62,89 +98,64 @@ namespace CactusThreading {
     private:
         static constexpr size_t MAX_WORKERS = 16;
 
-        struct WorkerQueue {
-            std::deque<std::function<void()>> tasks;
-            std::mutex mutex;
-        };
-
         std::vector<std::thread> workers;
-        std::vector<std::unique_ptr<WorkerQueue>> worker_queues;
+        std::deque<std::function<void()>> tasks;
+
+        std::mutex mutex;
+        std::condition_variable work_available;
+        std::condition_variable work_done;
+
+        bool stop{false};
+        std::atomic<size_t> pending_tasks{0};
         size_t num_workers_;
 
-        std::atomic<bool> stop{false};
-        std::atomic<size_t> active_workers{0};
-        std::atomic<size_t> total_tasks{0};
-        std::mutex wait_mutex;
-        std::condition_variable wait_condition;
-
-        bool try_steal(size_t thief_id, std::function<void()>& task) {
-            for (size_t i = 1; i < num_workers_; ++i) {
-                size_t victim = (thief_id + i) % num_workers_;
-                auto& victim_queue = *worker_queues[victim];
-
-                std::unique_lock<std::mutex> lock(victim_queue.mutex, std::try_to_lock);
-                if (lock.owns_lock() && !victim_queue.tasks.empty()) {
-                    task = std::move(victim_queue.tasks.front());
-                    victim_queue.tasks.pop_front();
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        void worker_thread(size_t id) {
-            auto& my_queue = *worker_queues[id];
-
-            while (!stop.load(std::memory_order_relaxed)) {
+        void worker_thread() {
+            while (true) {
                 std::function<void()> task;
-                bool got_task = false;
-
                 {
-                    std::lock_guard<std::mutex> lock(my_queue.mutex);
-                    if (!my_queue.tasks.empty()) {
-                        task = std::move(my_queue.tasks.back());
-                        my_queue.tasks.pop_back();
-                        got_task = true;
+                    std::unique_lock<std::mutex> lock(mutex);
+                    work_available.wait(lock, [this] {
+                        return stop || !tasks.empty();
+                    });
+
+                    if (stop && tasks.empty()) {
+                        return;
                     }
+
+                    task = std::move(tasks.front());
+                    tasks.pop_front();
                 }
 
-                if (!got_task) {
-                    got_task = try_steal(id, task);
-                }
+                task();
 
-                if (got_task) {
-                    active_workers.fetch_add(1, std::memory_order_relaxed);
-                    task();
-                    active_workers.fetch_sub(1, std::memory_order_relaxed);
-
-                    if (total_tasks.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                        wait_condition.notify_all();
-                    }
-                } else {
-                    std::this_thread::sleep_for(std::chrono::microseconds(10));
+                if (pending_tasks.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    work_done.notify_one();
                 }
             }
         }
 
     public:
-        explicit ThreadPool(size_t num_threads = std::thread::hardware_concurrency()) {
+        explicit ThreadPool(size_t num_threads = std::thread::hardware_concurrency())
+            : stop(false), pending_tasks(0) {
             num_workers_ = std::min(num_threads, MAX_WORKERS);
-
-            worker_queues.reserve(num_workers_);
-            for (size_t i = 0; i < num_workers_; ++i) {
-                worker_queues.push_back(std::make_unique<WorkerQueue>());
-            }
-
+            if (num_workers_ == 0) num_workers_ = 1;
             workers.reserve(num_workers_);
             for (size_t i = 0; i < num_workers_; ++i) {
-                workers.emplace_back(&ThreadPool::worker_thread, this, i);
+                workers.emplace_back(&ThreadPool::worker_thread, this);
             }
         }
 
         ~ThreadPool() {
-            stop.store(true, std::memory_order_release);
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                stop = true;
+            }
+            work_available.notify_all();
             for (auto& worker : workers) {
-                worker.join();
+                if (worker.joinable()) {
+                    worker.join();
+                }
             }
         }
 
@@ -158,11 +169,12 @@ namespace CactusThreading {
 
             std::future<return_type> res = task->get_future();
 
-            size_t target = total_tasks.fetch_add(1, std::memory_order_relaxed) % num_workers_;
             {
-                std::lock_guard<std::mutex> lock(worker_queues[target]->mutex);
-                worker_queues[target]->tasks.emplace_back([task](){ (*task)(); });
+                std::lock_guard<std::mutex> lock(mutex);
+                pending_tasks.fetch_add(1, std::memory_order_relaxed);
+                tasks.emplace_back([task](){ (*task)(); });
             }
+            work_available.notify_one();
 
             return res;
         }
@@ -175,23 +187,23 @@ namespace CactusThreading {
             const size_t per_worker = total_work / num_tasks;
             const size_t remainder = total_work % num_tasks;
 
-            total_tasks.fetch_add(num_tasks, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                pending_tasks.fetch_add(num_tasks, std::memory_order_relaxed);
 
-            for (size_t w = 0; w < num_tasks; ++w) {
-                size_t start = w * per_worker + std::min(w, remainder);
-                size_t end = start + per_worker + (w < remainder ? 1 : 0);
-
-                std::lock_guard<std::mutex> lock(worker_queues[w]->mutex);
-                worker_queues[w]->tasks.emplace_back(
-                    [=]() { task_func(start, end); }
-                );
+                for (size_t w = 0; w < num_tasks; ++w) {
+                    size_t start = w * per_worker + std::min(w, remainder);
+                    size_t end = start + per_worker + (w < remainder ? 1 : 0);
+                    tasks.emplace_back([=]() { task_func(start, end); });
+                }
             }
+            work_available.notify_all();
         }
 
         void wait_all() {
-            std::unique_lock<std::mutex> lock(wait_mutex);
-            wait_condition.wait(lock, [this] {
-                return total_tasks.load(std::memory_order_acquire) == 0;
+            std::unique_lock<std::mutex> lock(mutex);
+            work_done.wait(lock, [this] {
+                return pending_tasks.load(std::memory_order_acquire) == 0;
             });
         }
 
@@ -203,17 +215,17 @@ namespace CactusThreading {
             const size_t per_thread = total_work / num_threads;
             const size_t remainder = total_work % num_threads;
 
-            total_tasks.fetch_add(num_threads, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                pending_tasks.fetch_add(num_threads, std::memory_order_relaxed);
 
-            for (size_t t = 0; t < num_threads; ++t) {
-                size_t start = t * per_thread + std::min(t, remainder);
-                size_t end = start + per_thread + (t < remainder ? 1 : 0);
-
-                std::lock_guard<std::mutex> lock(worker_queues[t % num_workers_]->mutex);
-                worker_queues[t % num_workers_]->tasks.emplace_back(
-                    [=]() { task_func(start, end); }
-                );
+                for (size_t t = 0; t < num_threads; ++t) {
+                    size_t start = t * per_thread + std::min(t, remainder);
+                    size_t end = start + per_thread + (t < remainder ? 1 : 0);
+                    tasks.emplace_back([=]() { task_func(start, end); });
+                }
             }
+            work_available.notify_all();
         }
 
         size_t num_workers() const { return num_workers_; }
@@ -410,11 +422,7 @@ namespace CactusThreading {
     }
 
     template<typename WorkFunc>
-    void parallel_for_2d_tiled_gemm(size_t M, size_t rows, size_t cols, size_t tile_rows, size_t tile_cols, WorkFunc work_func) {
-        size_t num_row_tiles = (rows + tile_rows - 1) / tile_rows;
-        size_t num_col_tiles = (cols + tile_cols - 1) / tile_cols;
-        size_t total_tiles = num_row_tiles * num_col_tiles;
-
+    void parallel_gemm_tiles(size_t M, size_t total_tiles, WorkFunc work_func) {
         auto& pool = get_thread_pool();
 
         size_t override = get_gemm_thread_override();
@@ -422,67 +430,14 @@ namespace CactusThreading {
         num_threads = std::min(num_threads, total_tiles);
 
         if (num_threads <= 1) {
-            for (size_t tile_idx = 0; tile_idx < total_tiles; ++tile_idx) {
-                size_t tile_row = tile_idx / num_col_tiles;
-                size_t tile_col = tile_idx % num_col_tiles;
-                size_t row_start = tile_row * tile_rows;
-                size_t row_end = std::min(row_start + tile_rows, rows);
-                size_t col_start = tile_col * tile_cols;
-                size_t col_end = std::min(col_start + tile_cols, cols);
-                work_func(row_start, row_end, col_start, col_end);
-            }
+            work_func(0, total_tiles);
             return;
         }
 
-        pool.enqueue_n_threads(total_tiles, num_threads,
-            [=](size_t start_tile, size_t end_tile) {
-                for (size_t tile_idx = start_tile; tile_idx < end_tile; ++tile_idx) {
-                    size_t tile_row = tile_idx / num_col_tiles;
-                    size_t tile_col = tile_idx % num_col_tiles;
-                    size_t row_start = tile_row * tile_rows;
-                    size_t row_end = std::min(row_start + tile_rows, rows);
-                    size_t col_start = tile_col * tile_cols;
-                    size_t col_end = std::min(col_start + tile_cols, cols);
-                    work_func(row_start, row_end, col_start, col_end);
-                }
-            });
+        pool.enqueue_n_threads(total_tiles, num_threads, work_func);
         pool.wait_all();
     }
 
-    template<typename WorkFunc>
-    void parallel_for_2d_tiled(size_t rows, size_t cols, size_t tile_rows, size_t tile_cols, ParallelConfig config, WorkFunc work_func) {
-        size_t num_row_tiles = (rows + tile_rows - 1) / tile_rows;
-        size_t num_col_tiles = (cols + tile_cols - 1) / tile_cols;
-        size_t total_tiles = num_row_tiles * num_col_tiles;
-
-        if (total_tiles < config.min_work_gate) {
-            for (size_t tile_idx = 0; tile_idx < total_tiles; ++tile_idx) {
-                size_t tile_row = tile_idx / num_col_tiles;
-                size_t tile_col = tile_idx % num_col_tiles;
-                size_t row_start = tile_row * tile_rows;
-                size_t row_end = std::min(row_start + tile_rows, rows);
-                size_t col_start = tile_col * tile_cols;
-                size_t col_end = std::min(col_start + tile_cols, cols);
-                work_func(row_start, row_end, col_start, col_end);
-            }
-            return;
-        }
-
-        auto& pool = get_thread_pool();
-        pool.enqueue_batch(total_tiles,
-            [=](size_t start_tile, size_t end_tile) {
-                for (size_t tile_idx = start_tile; tile_idx < end_tile; ++tile_idx) {
-                    size_t tile_row = tile_idx / num_col_tiles;
-                    size_t tile_col = tile_idx % num_col_tiles;
-                    size_t row_start = tile_row * tile_rows;
-                    size_t row_end = std::min(row_start + tile_rows, rows);
-                    size_t col_start = tile_col * tile_cols;
-                    size_t col_end = std::min(col_start + tile_cols, cols);
-                    work_func(row_start, row_end, col_start, col_end);
-                }
-            });
-        pool.wait_all();
-    }
 }
 
 

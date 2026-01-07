@@ -146,8 +146,9 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
                         }
                         std::memcpy(output + i * element_size, tensor_data + idx * element_size, bytes_per_element);
                         if (is_grouped) {
+                            // Scale layout is [N, num_groups]
                             for (size_t g = 0; g < num_groups; g++) {
-                                gathered_scales[g * num_indices + i] = src_scales[g * first_dim + idx];
+                                gathered_scales[i * num_groups + g] = src_scales[idx * num_groups + g];
                             }
                         }
                     }
@@ -160,8 +161,9 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
                         }
                         std::memcpy(output + i * element_size, tensor_data + idx * element_size, bytes_per_element);
                         if (is_grouped) {
+                            // Scale layout is [N, num_groups]
                             for (size_t g = 0; g < num_groups; g++) {
-                                gathered_scales[g * num_indices + i] = src_scales[g * first_dim + idx];
+                                gathered_scales[i * num_groups + g] = src_scales[idx * num_groups + g];
                             }
                         }
                     }
@@ -255,7 +257,6 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
 
                 if (input_buffer.is_grouped_int8()) {
                     size_t num_groups = input_buffer.num_groups;
-                    size_t input_N = axis_size; 
                     size_t scales_bytes = slice_length * num_groups * sizeof(__fp16);
                     node.output_buffer.owned_scales = std::make_unique<char[]>(scales_bytes);
                     __fp16* sliced_scales = reinterpret_cast<__fp16*>(node.output_buffer.owned_scales.get());
@@ -263,7 +264,7 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
 
                     for (size_t i = 0; i < slice_length; i++) {
                         for (size_t g = 0; g < num_groups; g++) {
-                            sliced_scales[g * slice_length + i] = input_scales[g * input_N + (slice_start + i)];
+                            sliced_scales[i * num_groups + g] = input_scales[(slice_start + i) * num_groups + g];
                         }
                     }
 
@@ -332,7 +333,7 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
                         __fp16* out_row = output + i * hidden_dim;
 
                         for (size_t g = 0; g < num_groups; g++) {
-                            float scale = (float)scales[g * vocab_size + idx];
+                            float scale = (float)scales[idx * num_groups + g];
                             size_t k_start = g * group_size;
                             size_t k_end = std::min(k_start + group_size, hidden_dim);
                             for (size_t k = k_start; k < k_end; k++) {
@@ -633,12 +634,13 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
                     const __fp16* scales = W.scales_as_fp16();
                     const size_t K_total = W1 * K;
                     const size_t group_size = W.group_size;
+                    const size_t num_groups = K_total / group_size;
 
                     for (size_t row = 0; row < W0; ++row) {
                         for (size_t col = 0; col < K_total; ++col) {
                             size_t idx = row * K_total + col;
                             size_t group_idx = col / group_size;
-                            float scale = static_cast<float>(scales[group_idx * W0 + row]);
+                            float scale = static_cast<float>(scales[row * num_groups + group_idx]);
                             W_fp16[idx] = static_cast<__fp16>(W_int8[idx] * scale);
                         }
                     }
@@ -706,12 +708,13 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
                         const __fp16* scales = W.scales_as_fp16();
                         const size_t K_total = C_in * K;
                         const size_t group_size = W.group_size;
+                        const size_t num_groups = K_total / group_size;
 
                         for (size_t row = 0; row < C_out; ++row) {
                             for (size_t col = 0; col < K_total; ++col) {
                                 size_t idx = row * K_total + col;
                                 size_t group_idx = col / group_size;
-                                float scale = static_cast<float>(scales[group_idx * C_out + row]);
+                                float scale = static_cast<float>(scales[row * num_groups + group_idx]);
                                 W_fp16[idx] = static_cast<__fp16>(W_int8[idx] * scale);
                             }
                         }
@@ -787,21 +790,34 @@ void compute_matmul_node(GraphNode& node, const std::vector<std::unique_ptr<Grap
     const auto& rhs_buffer = nodes[node_index_map.at(node.input_ids[1])]->output_buffer;
     const auto& lhs_shape = lhs_buffer.shape;
     const auto& rhs_shape = rhs_buffer.shape;
-    
+
     size_t M = lhs_shape[lhs_shape.size() - 2];
     size_t K = lhs_shape[lhs_shape.size() - 1];
-    size_t N = node.params.pretransposed_rhs ? 
+    size_t N = node.params.pretransposed_rhs ?
                rhs_shape[rhs_shape.size() - 2] : rhs_shape[rhs_shape.size() - 1];
-    
+
     bool pretransposed_rhs = node.params.pretransposed_rhs;
-    
+
     ComputeBackend backend = node.params.backend;
-    
+
     if (backend == ComputeBackend::NPU) {
         throw std::runtime_error("NPU matrix multiplication not yet implemented");
     }
-    
-    if (lhs_buffer.precision == Precision::FP16 && rhs_buffer.is_grouped_int8()) {
+
+    if (lhs_buffer.precision == Precision::FP16 && rhs_buffer.is_packed_int4()) {
+        const __fp16* lhs = lhs_buffer.data_as<__fp16>();
+        const uint8_t* rhs_packed = rhs_buffer.packed_int4_as_uint8();
+        const __fp16* rhs_scales = rhs_buffer.scales_as_fp16();
+        __fp16* output = node.output_buffer.data_as<__fp16>();
+
+        if (!pretransposed_rhs) {
+            throw std::runtime_error("INT4 matmul requires pretransposed weights");
+        }
+
+        cactus_matmul_int4(lhs, rhs_packed, rhs_scales, output,
+                           M, K, N, rhs_buffer.group_size);
+
+    } else if (lhs_buffer.precision == Precision::FP16 && rhs_buffer.is_grouped_int8()) {
         const __fp16* lhs = lhs_buffer.data_as<__fp16>();
         const int8_t* rhs = rhs_buffer.data_as<int8_t>();
         const __fp16* rhs_scales = rhs_buffer.scales_as_fp16();

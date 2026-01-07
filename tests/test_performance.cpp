@@ -188,7 +188,7 @@ void benchmark_matmul_ops(TestUtils::TestRunner& runner, const BenchmarkConfig& 
 }
 
 void benchmark_matmul_int8_grouped(TestUtils::TestRunner& runner, const BenchmarkConfig& config) {
-    const size_t group_size = 32;
+    const size_t group_size = 64;  // Kernel processes 64 K elements at a time
 
     std::vector<std::tuple<size_t, size_t, size_t>> shapes = {
         {1, 1024, 1024},
@@ -228,6 +228,56 @@ void benchmark_matmul_int8_grouped(TestUtils::TestRunner& runner, const Benchmar
                 << std::setprecision(2) << gflops << " GFLOPS";
         runner.log_performance(
             "MatMul INT8 " + std::to_string(M) + "x" + std::to_string(K_aligned) + "x" + std::to_string(N),
+            details.str());
+    }
+}
+
+void benchmark_matmul_int4_grouped(TestUtils::TestRunner& runner, const BenchmarkConfig& config) {
+    const size_t group_size = 64;  
+
+    std::vector<std::tuple<size_t, size_t, size_t>> shapes = {
+        {1, 1024, 1024},
+        {1024, 1024, 1024},
+    };
+
+    for (const auto& [M, K, N] : shapes) {
+        size_t K_aligned = ((K + group_size - 1) / group_size) * group_size;
+        size_t num_groups = K_aligned / group_size;
+        size_t K_packed = K_aligned / 2;  
+
+        std::vector<__fp16> A(M * K_aligned);
+        for (size_t i = 0; i < M * K_aligned; ++i) {
+            A[i] = static_cast<__fp16>((static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f);
+        }
+
+        std::vector<uint8_t> B_packed(N * K_packed);
+        for (size_t i = 0; i < N * K_packed; ++i) {
+            B_packed[i] = static_cast<uint8_t>(rand() % 256);
+        }
+
+        std::vector<__fp16> B_scales(N * num_groups);
+        for (size_t i = 0; i < N * num_groups; ++i) {
+            B_scales[i] = static_cast<__fp16>(0.01f + (static_cast<float>(rand()) / RAND_MAX) * 0.05f);
+        }
+
+        std::vector<__fp16> C(M * N);
+
+        double time_ms = time_operation<__fp16>([&]() {
+            cactus_matmul_int4(A.data(), B_packed.data(), B_scales.data(), C.data(),
+                               M, K_aligned, N, group_size);
+        }, config.iterations);
+
+        double gflops = calculate_gflops(2ULL * M * K_aligned * N, time_ms);
+
+        double bytes_loaded = M * K_aligned + N * K_packed + N * num_groups * 2 + M * N * 2;
+        double gb_per_sec = bytes_loaded / (time_ms * 1e6);
+
+        std::ostringstream details;
+        details << std::fixed << std::setprecision(3) << time_ms << "ms, "
+                << std::setprecision(2) << gflops << " GFLOPS, "
+                << std::setprecision(2) << gb_per_sec << " GB/s";
+        runner.log_performance(
+            "MatMul INT4 " + std::to_string(M) + "x" + std::to_string(K_aligned) + "x" + std::to_string(N),
             details.str());
     }
 }
@@ -770,6 +820,12 @@ bool test_grouped_int8_matmul_performance(TestUtils::TestRunner& runner) {
     return true;
 }
 
+bool test_grouped_int4_matmul_performance(TestUtils::TestRunner& runner) {
+    BenchmarkConfig config;
+    benchmark_matmul_int4_grouped(runner, config);
+    return true;
+}
+
 bool test_unary_operations_performance(TestUtils::TestRunner& runner) {
     BenchmarkConfig config;
     benchmark_unary_ops<__fp16>(runner, config);
@@ -832,6 +888,7 @@ int main() {
     runner.run_test("Scalar Operations", test_scalar_operations_performance(runner));
     runner.run_test("Matrix Multiplication", test_matrix_multiplication_performance(runner));
     runner.run_test("Grouped INT8 MatMul", test_grouped_int8_matmul_performance(runner));
+    runner.run_test("Grouped INT4 MatMul", test_grouped_int4_matmul_performance(runner));
     runner.run_test("Unary Operations", test_unary_operations_performance(runner));
     runner.run_test("Reduction Operations", test_reduction_operations_performance(runner));
     runner.run_test("Advanced Operations", test_advanced_operations_performance(runner));

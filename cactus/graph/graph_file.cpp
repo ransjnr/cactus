@@ -146,12 +146,13 @@ GraphFile::MappedFile::MappedFile(const std::string& filename)
     }
     file_size_ = st.st_size;
     
-    mapped_data_ = mmap(nullptr, file_size_, PROT_READ, MAP_PRIVATE, fd_, 0);
+    mapped_data_ = mmap(nullptr, file_size_, PROT_READ, MAP_SHARED, fd_, 0);
     if (mapped_data_ == MAP_FAILED) {
         close(fd_);
         throw std::runtime_error("Cannot map file: " + filename);
     }
 
+    madvise(mapped_data_, file_size_, MADV_SEQUENTIAL);
     madvise(mapped_data_, file_size_, MADV_WILLNEED);
 
     close(fd_);
@@ -231,21 +232,21 @@ const void* GraphFile::MappedFile::scales_data() const {
     return static_cast<const char*>(mapped_data_) + scales_offset_;
 }
 
+const void* GraphFile::MappedFile::raw_packed_data() const {
+    return static_cast<const char*>(mapped_data_) + data_offset_;
+}
 
 void GraphFile::MappedFile::unpack_int4_if_needed() const {
     if (!is_int4_ || unpacked_int4_data_) {
-        return;  // Not INT4, or already unpacked
+        return;  
     }
 
-    // Calculate unpacked size (2x packed size)
     size_t unpacked_count = byte_size_ * 2;
     unpacked_int4_data_ = std::make_unique<int8_t[]>(unpacked_count);
 
-    // Get packed data from mmap
     const uint8_t* packed = reinterpret_cast<const uint8_t*>(
         static_cast<const char*>(mapped_data_) + data_offset_);
 
-    // Unpack INT4 to INT8
     cactus_unpack_int4_to_int8(packed, unpacked_int4_data_.get(), unpacked_count);
 }
 
@@ -274,15 +275,29 @@ GraphFile::LoadedNode GraphFile::MappedFile::load_into_graph(CactusGraph& graph)
     Precision eff_prec = effective_precision();
 
     size_t node_id = graph.input(shape_, eff_prec);
-    graph.set_external_input(node_id, const_cast<void*>(data()), eff_prec);
 
-    if ((eff_prec == Precision::INT8) && group_size_ > 0) {
-        graph.set_grouped_scales(node_id, group_size_, num_groups_,
-                                 const_cast<void*>(scales_data()));
+    if (is_int4_) {
+        auto& node_buffer = graph.nodes_[graph.node_index_map_.at(node_id)]->output_buffer;
+        node_buffer.set_external(const_cast<void*>(raw_packed_data()));
+        node_buffer.set_packed_int4(raw_packed_data(), byte_size_);
+        // Update byte_size to reflect actual packed storage (not unpacked INT8 size)
+        node_buffer.byte_size = byte_size_;
+
+        if (group_size_ > 0) {
+            graph.set_grouped_scales(node_id, group_size_, num_groups_,
+                                     const_cast<void*>(scales_data()));
+        }
+    } else {
+        graph.set_external_input(node_id, const_cast<void*>(data()), eff_prec);
+
+        if ((eff_prec == Precision::INT8) && group_size_ > 0) {
+            graph.set_grouped_scales(node_id, group_size_, num_groups_,
+                                     const_cast<void*>(scales_data()));
+        }
     }
 
-    size_t reported_byte_size = is_int4_ ? byte_size_ * 2 : byte_size_;
-    return {node_id, shape_, eff_prec, reported_byte_size};
+    // Return actual storage size (packed for INT4)
+    return {node_id, shape_, eff_prec, byte_size_};
 }
 
 void GraphFile::MappedFile::parse_header() {

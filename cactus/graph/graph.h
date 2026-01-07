@@ -205,6 +205,9 @@ struct BufferDesc {
     void* scales_data = nullptr;
     std::unique_ptr<char[]> owned_scales;
 
+    const void* packed_int4_data = nullptr;  
+    size_t packed_int4_size = 0; 
+
     BufferDesc();
     BufferDesc(const std::vector<size_t>& s, Precision prec = Precision::INT8);
     ~BufferDesc();
@@ -230,10 +233,20 @@ struct BufferDesc {
     bool is_grouped_int8() const {
         return precision == Precision::INT8 && group_size > 0;
     }
+    bool is_packed_int4() const {
+        return packed_int4_data != nullptr && packed_int4_size > 0;
+    }
+    const uint8_t* packed_int4_as_uint8() const {
+        return reinterpret_cast<const uint8_t*>(packed_int4_data);
+    }
     void set_grouped_scales(size_t gs, size_t ng, void* scales_ptr) {
         group_size = gs;
         num_groups = ng;
         scales_data = scales_ptr;
+    }
+    void set_packed_int4(const void* packed_data, size_t packed_size) {
+        packed_int4_data = packed_data;
+        packed_int4_size = packed_size;
     }
 
     void allocate();
@@ -486,6 +499,7 @@ namespace GraphFile {
         size_t group_size() const { return group_size_; }
         size_t num_groups() const { return num_groups_; }
         const void* scales_data() const;
+        const void* raw_packed_data() const;  // Get raw mmap'd data without unpacking (for INT4)
         bool is_int4() const { return is_int4_; }
 
         void* data();

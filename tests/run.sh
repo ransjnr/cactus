@@ -13,6 +13,7 @@ MODEL_NAME="$DEFAULT_MODEL"
 TRANSCRIBE_MODEL_NAME="$DEFAULT_TRANSCRIBE_MODEL"
 ANDROID_MODE=false
 IOS_MODE=false
+NO_REBUILD=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -32,6 +33,10 @@ while [[ $# -gt 0 ]]; do
             IOS_MODE=true
             shift
             ;;
+        --no-rebuild)
+            NO_REBUILD=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -40,6 +45,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --transcribe_model <name> Transcribe model to use (default: $DEFAULT_TRANSCRIBE_MODEL)"
             echo "  --android                 Run tests on Android device or emulator"
             echo "  --ios                     Run tests on iOS device or simulator"
+            echo "  --no-rebuild              Skip building cactus library and tests"
             echo "  --help, -h                Show this help message"
             exit 0
             ;;
@@ -76,28 +82,33 @@ if [ "$IOS_MODE" = true ]; then
     exec "$SCRIPT_DIR/ios/run.sh" "$MODEL_NAME" "$TRANSCRIBE_MODEL_NAME"
 fi
 
-echo "Step 2: Building Cactus library..."
-if ! cactus build; then
-    echo "Failed to build cactus library"
-    exit 1
-fi
+if [ "$NO_REBUILD" = false ]; then
+    echo "Step 2: Building Cactus library..."
+    if ! cactus build; then
+        echo "Failed to build cactus library"
+        exit 1
+    fi
 
-echo ""
-echo "Step 3: Building tests..."
-cd "$PROJECT_ROOT/tests"
+    echo ""
+    echo "Step 3: Building tests..."
+    cd "$PROJECT_ROOT/tests"
 
-rm -rf build
-mkdir -p build
-cd build
+    rm -rf build
+    mkdir -p build
+    cd build
 
-if ! cmake .. -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=OFF > /dev/null 2>&1; then
-    echo "Failed to configure tests"
-    exit 1
-fi
+    if ! cmake .. -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=OFF > /dev/null 2>&1; then
+        echo "Failed to configure tests"
+        exit 1
+    fi
 
-if ! make -j$(nproc 2>/dev/null || echo 4); then
-    echo "Failed to build tests"
-    exit 1
+    if ! make -j$(nproc 2>/dev/null || echo 4); then
+        echo "Failed to build tests"
+        exit 1
+    fi
+else
+    echo "Skipping build (--no-rebuild)"
+    cd "$PROJECT_ROOT/tests/build"
 fi
 
 echo ""

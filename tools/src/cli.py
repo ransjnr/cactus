@@ -461,6 +461,27 @@ def cmd_test(args):
     print_color(BLUE, "Running test suite...")
     print("=" * 20)
 
+    precision = getattr(args, 'precision', None)
+    if precision:
+        model_id = getattr(args, 'model', 'LiquidAI/LFM2-VL-450M')
+        weights_dir = get_weights_dir(model_id)
+
+        if weights_dir.exists():
+            print_color(YELLOW, f"Removing existing weights at {weights_dir} to regenerate with {precision}...")
+            shutil.rmtree(weights_dir)
+
+        class DownloadArgs:
+            pass
+        dl_args = DownloadArgs()
+        dl_args.model_id = model_id
+        dl_args.precision = precision
+        dl_args.cache_dir = None
+        dl_args.token = getattr(args, 'token', None)
+
+        download_result = cmd_download(dl_args)
+        if download_result != 0:
+            return download_result
+
     test_script = PROJECT_ROOT / "tests" / "run.sh"
 
     if not test_script.exists():
@@ -473,6 +494,8 @@ def cmd_test(args):
         cmd.extend(["--model", args.model])
     if args.transcribe_model:
         cmd.extend(["--transcribe_model", args.transcribe_model])
+    if getattr(args, 'no_rebuild', False):
+        cmd.append("--no-rebuild")
     if args.android:
         cmd.append("--android")
     if args.ios:
@@ -718,6 +741,8 @@ def create_parser():
     Optional flags:
     --model <model>                    default: LFM2-VL-450M
     --transcribe_model <model>         default: whisper-small
+    --precision INT4|INT8|FP16         regenerates weights with precision
+    --no-rebuild                       skip building library and tests
     --ios                              run on connected iPhone
     --android                          run on connected Android
 
@@ -797,6 +822,11 @@ def create_parser():
                              help='Model to use for tests')
     test_parser.add_argument('--transcribe_model', default='openai/whisper-small',
                              help='Transcribe model to use')
+    test_parser.add_argument('--precision', choices=['INT4', 'INT8', 'FP16'],
+                             help='Regenerate weights with this precision (deletes existing weights)')
+    test_parser.add_argument('--no-rebuild', action='store_true',
+                             help='Skip building cactus library and tests')
+    test_parser.add_argument('--token', help='HuggingFace API token')
     test_parser.add_argument('--android', action='store_true',
                              help='Run tests on Android')
     test_parser.add_argument('--ios', action='store_true',

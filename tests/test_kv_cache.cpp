@@ -27,12 +27,11 @@ bool test_sliding_window_basic() {
     const size_t sink_size = 4;
 
     KVCache cache;
-    cache.init(num_layers, max_seq, num_kv_heads, head_dim, Precision::FP16);
+    cache.init(num_layers, max_seq, num_kv_heads, head_dim, Precision::INT8);
     cache.set_window_size(window_size, sink_size);
 
     CactusGraph graph;
 
-    // Phase 1: Initial fill (10 tokens)
     {
         size_t seq_len = 10;
         vector<size_t> k_nodes, v_nodes;
@@ -61,15 +60,13 @@ bool test_sliding_window_basic() {
         size_t additional_seq = 6;
         vector<size_t> k_nodes, v_nodes;
 
-        size_t total_seq = cache.get_effective_seq_len() + additional_seq;
-
         for (size_t layer = 0; layer < num_layers; layer++) {
-            size_t k_node = graph.input({total_seq, num_kv_heads, head_dim}, Precision::FP16);
-            size_t v_node = graph.input({total_seq, num_kv_heads, head_dim}, Precision::FP16);
+            size_t k_node = graph.input({additional_seq, num_kv_heads, head_dim}, Precision::FP16);
+            size_t v_node = graph.input({additional_seq, num_kv_heads, head_dim}, Precision::FP16);
 
             vector<uint8_t> k_data, v_data;
-            fill_fp16(k_data, total_seq * num_kv_heads * head_dim, layer + 10.0f);
-            fill_fp16(v_data, total_seq * num_kv_heads * head_dim, layer + 20.0f);
+            fill_fp16(k_data, additional_seq * num_kv_heads * head_dim, layer + 10.0f);
+            fill_fp16(v_data, additional_seq * num_kv_heads * head_dim, layer + 20.0f);
             graph.set_input(k_node, k_data.data(), Precision::FP16);
             graph.set_input(v_node, v_data.data(), Precision::FP16);
 
@@ -87,30 +84,15 @@ bool test_sliding_window_basic() {
         size_t additional_seq = 10;
         vector<size_t> k_nodes, v_nodes;
 
-        size_t total_seq = cache.get_effective_seq_len() + additional_seq;
-
-        float sink_value = 50.0f;
-        float rest_value = 100.0f;
+        float new_token_value = 100.0f;
 
         for (size_t layer = 0; layer < num_layers; layer++) {
-            size_t k_node = graph.input({total_seq, num_kv_heads, head_dim}, Precision::FP16);
-            size_t v_node = graph.input({total_seq, num_kv_heads, head_dim}, Precision::FP16);
+            size_t k_node = graph.input({additional_seq, num_kv_heads, head_dim}, Precision::FP16);
+            size_t v_node = graph.input({additional_seq, num_kv_heads, head_dim}, Precision::FP16);
 
-            vector<uint8_t> k_data(total_seq * num_kv_heads * head_dim * sizeof(__fp16));
-            vector<uint8_t> v_data(total_seq * num_kv_heads * head_dim * sizeof(__fp16));
-            __fp16* k_ptr = reinterpret_cast<__fp16*>(k_data.data());
-            __fp16* v_ptr = reinterpret_cast<__fp16*>(v_data.data());
-
-            for (size_t i = 0; i < sink_size * num_kv_heads * head_dim; i++) {
-                k_ptr[i] = static_cast<__fp16>(sink_value);
-                v_ptr[i] = static_cast<__fp16>(sink_value);
-            }
-            
-            for (size_t i = sink_size * num_kv_heads * head_dim; i < total_seq * num_kv_heads * head_dim; i++) {
-                k_ptr[i] = static_cast<__fp16>(rest_value);
-                v_ptr[i] = static_cast<__fp16>(rest_value);
-            }
-
+            vector<uint8_t> k_data, v_data;
+            fill_fp16(k_data, additional_seq * num_kv_heads * head_dim, new_token_value);
+            fill_fp16(v_data, additional_seq * num_kv_heads * head_dim, new_token_value);
             graph.set_input(k_node, k_data.data(), Precision::FP16);
             graph.set_input(v_node, v_data.data(), Precision::FP16);
 
@@ -128,8 +110,9 @@ bool test_sliding_window_basic() {
         if (key_data && key_scales) {
             bool sink_preserved = true;
 
+            float expected_sink_value = 1.0f;
             float sink_scale = key_scales[0];
-            int8_t expected_sink_q = static_cast<int8_t>(std::round(sink_value / sink_scale));
+            int8_t expected_sink_q = static_cast<int8_t>(std::round(expected_sink_value / sink_scale));
 
             for (size_t i = 0; i < min((size_t)8, sink_size * num_kv_heads * head_dim); i++) {
                 if (abs(key_data[i] - expected_sink_q) > 2) {

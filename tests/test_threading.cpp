@@ -72,7 +72,8 @@ std::vector<BenchResult> benchmark_gemm_threading() {
 
                 std::vector<__fp16> A(M * K_aligned);
                 std::vector<int8_t> B(N * K_aligned);
-                std::vector<__fp16> B_scales(num_groups * N);
+
+                std::vector<__fp16> B_scales(N * num_groups);
                 std::vector<__fp16> C(M * N);
 
                 for (size_t i = 0; i < M * K_aligned; ++i) {
@@ -81,7 +82,7 @@ std::vector<BenchResult> benchmark_gemm_threading() {
                 for (size_t i = 0; i < N * K_aligned; ++i) {
                     B[i] = static_cast<int8_t>(int_dist(gen));
                 }
-                for (size_t i = 0; i < num_groups * N; ++i) {
+                for (size_t i = 0; i < N * num_groups; ++i) {
                     B_scales[i] = static_cast<__fp16>(0.01f + std::abs(float_dist(gen)) * 0.05f);
                 }
 
@@ -96,11 +97,9 @@ std::vector<BenchResult> benchmark_gemm_threading() {
                 for (size_t num_threads : thread_counts) {
                     CactusThreading::set_gemm_threads(num_threads);
 
-                    // Warmup
                     cactus_matmul_int8(A.data(), B.data(), B_scales.data(), C.data(),
                                      M, K_aligned, N, group_size);
 
-                    // Benchmark
                     auto start = std::chrono::high_resolution_clock::now();
                     for (int i = 0; i < iterations; ++i) {
                         cactus_matmul_int8(A.data(), B.data(), B_scales.data(), C.data(),

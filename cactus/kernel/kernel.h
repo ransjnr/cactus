@@ -41,6 +41,9 @@ void cactus_scalar_op_f16(const __fp16* input, __fp16* output, size_t num_elemen
 void cactus_matmul_int8(const __fp16* A, const int8_t* B, const __fp16* B_scales,
                        __fp16* C, size_t M, size_t K, size_t N, size_t group_size);
 
+void cactus_matmul_int4(const __fp16* A, const uint8_t* B_packed, const __fp16* B_scales,
+                        __fp16* C, size_t M, size_t K, size_t N, size_t group_size);
+
 void cactus_matmul_f16(const __fp16* a, const __fp16* b_transposed, __fp16* c,
                        size_t M, size_t K, size_t N);
 
