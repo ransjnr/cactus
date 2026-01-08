@@ -125,8 +125,8 @@ def save_tensor_with_header(tensor, output_path, precision='FP16', transpose=Fal
             f.write(struct.pack('<Q', byte_size))
             f.write(struct.pack('<I', GROUP_SIZE))
             f.write(struct.pack('<Q', num_groups))
-            f.write(quantized_flat.tobytes())
             f.write(scales_fp16.tobytes())
+            f.write(quantized_flat.tobytes())
 
         if stats_tracker:
             stats_tracker['total_tensors'] += 1
@@ -192,8 +192,8 @@ def save_tensor_with_header(tensor, output_path, precision='FP16', transpose=Fal
                 f.write(struct.pack('<Q', byte_size))
                 f.write(struct.pack('<I', GROUP_SIZE))
                 f.write(struct.pack('<Q', num_groups))
-                f.write(packed.tobytes())
                 f.write(scales_fp16.tobytes())
+                f.write(packed.tobytes())
 
             if stats_tracker:
                 stats_tracker['total_tensors'] += 1

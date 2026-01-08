@@ -51,13 +51,13 @@ namespace GraphFile {
             file.write(reinterpret_cast<const char*>(&num_groups), sizeof(num_groups));
         }
 
-        file.write(static_cast<const char*>(data), byte_size);
-
         if (precision == Precision::INT8 && buffer.is_grouped_int8() && buffer.scales_data) {
             size_t N = shape.size() >= 1 ? shape[0] : 1;
             size_t scales_bytes = N * buffer.num_groups * sizeof(__fp16);
             file.write(static_cast<const char*>(buffer.scales_data), scales_bytes);
         }
+
+        file.write(static_cast<const char*>(data), byte_size);
 
         if (!file) {
             throw std::runtime_error("Error writing node data to file: " + filename);
@@ -103,7 +103,14 @@ namespace GraphFile {
             throw std::runtime_error("Error reading file header: " + filename);
         }
 
-        // Read weights
+        std::vector<char> scales_buffer;
+        if (precision == Precision::INT8 && group_size > 0 && num_groups > 0) {
+            size_t N = shape.size() >= 1 ? shape[0] : 1;
+            size_t scales_bytes = N * num_groups * sizeof(__fp16);
+            scales_buffer.resize(scales_bytes);
+            file.read(scales_buffer.data(), scales_bytes);
+        }
+
         std::vector<char> buffer(byte_size);
         file.read(buffer.data(), byte_size);
 
@@ -115,14 +122,9 @@ namespace GraphFile {
         graph.set_input(node_id, buffer.data(), precision);
 
         if (precision == Precision::INT8 && group_size > 0 && num_groups > 0) {
-            size_t N = shape.size() >= 1 ? shape[0] : 1;
-            size_t scales_bytes = N * num_groups * sizeof(__fp16);
-            std::vector<char> scales_buffer(scales_bytes);
-            file.read(scales_buffer.data(), scales_bytes);
-
             auto& node_buffer = graph.nodes_[graph.node_index_map_.at(node_id)]->output_buffer;
-            node_buffer.owned_scales = std::make_unique<char[]>(scales_bytes);
-            std::memcpy(node_buffer.owned_scales.get(), scales_buffer.data(), scales_bytes);
+            node_buffer.owned_scales = std::make_unique<char[]>(scales_buffer.size());
+            std::memcpy(node_buffer.owned_scales.get(), scales_buffer.data(), scales_buffer.size());
             node_buffer.set_grouped_scales(group_size, num_groups, node_buffer.owned_scales.get());
         }
 
@@ -280,7 +282,6 @@ GraphFile::LoadedNode GraphFile::MappedFile::load_into_graph(CactusGraph& graph)
         auto& node_buffer = graph.nodes_[graph.node_index_map_.at(node_id)]->output_buffer;
         node_buffer.set_external(const_cast<void*>(raw_packed_data()));
         node_buffer.set_packed_int4(raw_packed_data(), byte_size_);
-        // Update byte_size to reflect actual packed storage (not unpacked INT8 size)
         node_buffer.byte_size = byte_size_;
 
         if (group_size_ > 0) {
@@ -344,18 +345,19 @@ void GraphFile::MappedFile::parse_header() {
         num_groups_ = *reinterpret_cast<const uint64_t*>(ptr + offset);
         offset += sizeof(uint64_t);
 
-        data_offset_ = offset;
-
         if (group_size_ > 0 && num_groups_ > 0) {
-            scales_offset_ = data_offset_ + byte_size_;
+            scales_offset_ = offset;
             size_t N = shape_.size() >= 1 ? shape_[0] : 1;
             size_t scales_byte_size = N * num_groups_ * sizeof(__fp16);
 
             if (scales_offset_ + scales_byte_size > file_size_) {
                 throw std::runtime_error("File corrupted: scales data extends beyond file size");
             }
+
+            data_offset_ = scales_offset_ + scales_byte_size;
         } else {
             scales_offset_ = 0;
+            data_offset_ = offset;
         }
     } else {
         group_size_ = 0;
