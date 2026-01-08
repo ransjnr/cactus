@@ -8,6 +8,19 @@
 #include <unistd.h>
 #include <cstring>
 
+namespace {
+    constexpr uint32_t CACTUS_MAGIC = 0x54434143;  // "CACT" in little-endian
+    constexpr uint32_t TENSOR_FORMAT_VERSION = 1;
+    constexpr uint32_t FLAG_HAS_SCALES = 1 << 0;
+    constexpr size_t HEADER_SIZE = 80;
+
+    inline size_t align_offset(size_t offset, size_t alignment) {
+        size_t remainder = offset % alignment;
+        if (remainder == 0) return offset;
+        return offset + (alignment - remainder);
+    }
+}
+
 namespace GraphFile {
     
     void save_node(CactusGraph& graph, size_t node_id, const std::string& filename) {
@@ -23,17 +36,6 @@ namespace GraphFile {
             throw std::runtime_error("Cannot open file for writing: " + filename);
         }
 
-        uint32_t ndim = static_cast<uint32_t>(shape.size());
-        file.write(reinterpret_cast<const char*>(&ndim), sizeof(ndim));
-
-        for (size_t dim : shape) {
-            uint64_t dim_val = static_cast<uint64_t>(dim);
-            file.write(reinterpret_cast<const char*>(&dim_val), sizeof(dim_val));
-        }
-
-        uint32_t prec_val = static_cast<uint32_t>(precision);
-        file.write(reinterpret_cast<const char*>(&prec_val), sizeof(prec_val));
-
         size_t total_elements = 1;
         for (size_t dim : shape) {
             total_elements *= dim;
@@ -41,20 +43,59 @@ namespace GraphFile {
 
         size_t element_size = PrecisionTraits::size_of(precision);
         size_t byte_size = total_elements * element_size;
-        uint64_t size_val = static_cast<uint64_t>(byte_size);
-        file.write(reinterpret_cast<const char*>(&size_val), sizeof(size_val));
 
-        if (precision == Precision::INT8) {
-            uint32_t group_size = buffer.is_grouped_int8() ? static_cast<uint32_t>(buffer.group_size) : 0;
-            uint64_t num_groups = buffer.is_grouped_int8() ? static_cast<uint64_t>(buffer.num_groups) : 0;
-            file.write(reinterpret_cast<const char*>(&group_size), sizeof(group_size));
-            file.write(reinterpret_cast<const char*>(&num_groups), sizeof(num_groups));
+        bool has_scales = (precision == Precision::INT8 && buffer.is_grouped_int8() && buffer.scales_data);
+        size_t N = shape.size() >= 1 ? shape[0] : 1;
+        size_t scales_bytes = has_scales ? (N * buffer.num_groups * sizeof(__fp16)) : 0;
+
+        uint32_t ndim = static_cast<uint32_t>(shape.size());
+        uint32_t flags = has_scales ? FLAG_HAS_SCALES : 0;
+        uint32_t alignment = 32;
+
+        uint32_t magic = CACTUS_MAGIC;
+        uint32_t version = TENSOR_FORMAT_VERSION;
+        file.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+        file.write(reinterpret_cast<const char*>(&version), sizeof(version));
+        file.write(reinterpret_cast<const char*>(&flags), sizeof(flags));
+        file.write(reinterpret_cast<const char*>(&alignment), sizeof(alignment));
+        file.write(reinterpret_cast<const char*>(&ndim), sizeof(ndim));
+
+        for (uint32_t i = 0; i < 4; i++) {
+            uint64_t dim_val = (i < shape.size()) ? static_cast<uint64_t>(shape[i]) : 0;
+            file.write(reinterpret_cast<const char*>(&dim_val), sizeof(dim_val));
         }
 
-        if (precision == Precision::INT8 && buffer.is_grouped_int8() && buffer.scales_data) {
-            size_t N = shape.size() >= 1 ? shape[0] : 1;
-            size_t scales_bytes = N * buffer.num_groups * sizeof(__fp16);
+        uint32_t prec_val = static_cast<uint32_t>(precision);
+        file.write(reinterpret_cast<const char*>(&prec_val), sizeof(prec_val));
+
+        uint64_t data_bytes = static_cast<uint64_t>(byte_size);
+        uint64_t scales_bytes_val = static_cast<uint64_t>(scales_bytes);
+        file.write(reinterpret_cast<const char*>(&data_bytes), sizeof(data_bytes));
+        file.write(reinterpret_cast<const char*>(&scales_bytes_val), sizeof(scales_bytes_val));
+
+        uint32_t group_size = has_scales ? static_cast<uint32_t>(buffer.group_size) : 0;
+        uint32_t num_groups = has_scales ? static_cast<uint32_t>(buffer.num_groups) : 0;
+        file.write(reinterpret_cast<const char*>(&group_size), sizeof(group_size));
+        file.write(reinterpret_cast<const char*>(&num_groups), sizeof(num_groups));
+
+        size_t header_end = 80;
+        size_t aligned_header = align_offset(header_end, alignment);
+        size_t header_padding = aligned_header - header_end;
+        for (size_t i = 0; i < header_padding; i++) {
+            char zero = 0;
+            file.write(&zero, 1);
+        }
+
+        if (has_scales) {
             file.write(static_cast<const char*>(buffer.scales_data), scales_bytes);
+
+            size_t scales_end = aligned_header + scales_bytes;
+            size_t data_start = align_offset(scales_end, alignment);
+            size_t scales_padding = data_start - scales_end;
+            for (size_t i = 0; i < scales_padding; i++) {
+                char zero = 0;
+                file.write(&zero, 1);
+            }
         }
 
         file.write(static_cast<const char*>(data), byte_size);
@@ -70,47 +111,78 @@ namespace GraphFile {
             throw std::runtime_error("Cannot open file for reading: " + filename);
         }
 
-        uint32_t ndim;
-        file.read(reinterpret_cast<char*>(&ndim), sizeof(ndim));
-
-        std::vector<size_t> shape(ndim);
-        for (uint32_t i = 0; i < ndim; i++) {
-            uint64_t dim_val;
-            file.read(reinterpret_cast<char*>(&dim_val), sizeof(dim_val));
-            shape[i] = static_cast<size_t>(dim_val);
-        }
-
-        uint32_t prec_val;
-        file.read(reinterpret_cast<char*>(&prec_val), sizeof(prec_val));
-        Precision precision = static_cast<Precision>(prec_val);
-
-        uint64_t size_val;
-        file.read(reinterpret_cast<char*>(&size_val), sizeof(size_val));
-        size_t byte_size = static_cast<size_t>(size_val);
-
-        size_t group_size = 0;
-        size_t num_groups = 0;
-        if (precision == Precision::INT8) {
-            uint32_t gs;
-            uint64_t ng;
-            file.read(reinterpret_cast<char*>(&gs), sizeof(gs));
-            file.read(reinterpret_cast<char*>(&ng), sizeof(ng));
-            group_size = static_cast<size_t>(gs);
-            num_groups = static_cast<size_t>(ng);
-        }
-
+        char header[HEADER_SIZE];
+        file.read(header, HEADER_SIZE);
         if (!file) {
             throw std::runtime_error("Error reading file header: " + filename);
         }
 
-        std::vector<char> scales_buffer;
-        if (precision == Precision::INT8 && group_size > 0 && num_groups > 0) {
-            size_t N = shape.size() >= 1 ? shape[0] : 1;
-            size_t scales_bytes = N * num_groups * sizeof(__fp16);
-            scales_buffer.resize(scales_bytes);
-            file.read(scales_buffer.data(), scales_bytes);
+        const char* ptr = header;
+        size_t offset = 0;
+
+        uint32_t magic = *reinterpret_cast<const uint32_t*>(ptr + offset);
+        offset += sizeof(uint32_t);
+        if (magic != CACTUS_MAGIC) {
+            throw std::runtime_error("Invalid tensor file: missing CACT magic number");
         }
 
+        offset += sizeof(uint32_t);
+
+        offset += sizeof(uint32_t);
+
+        uint32_t alignment = *reinterpret_cast<const uint32_t*>(ptr + offset);
+        offset += sizeof(uint32_t);
+        if (alignment == 0) alignment = 1;
+
+        uint32_t ndim = *reinterpret_cast<const uint32_t*>(ptr + offset);
+        offset += sizeof(uint32_t);
+
+        std::vector<size_t> shape;
+        for (uint32_t i = 0; i < 4; i++) {
+            uint64_t dim_val = *reinterpret_cast<const uint64_t*>(ptr + offset);
+            offset += sizeof(uint64_t);
+            if (i < ndim && dim_val > 0) {
+                shape.push_back(static_cast<size_t>(dim_val));
+            }
+        }
+
+        uint32_t prec_val = *reinterpret_cast<const uint32_t*>(ptr + offset);
+        Precision precision = static_cast<Precision>(prec_val);
+        offset += sizeof(uint32_t);
+
+        size_t byte_size = *reinterpret_cast<const uint64_t*>(ptr + offset);
+        offset += sizeof(uint64_t);
+
+        size_t scales_bytes = *reinterpret_cast<const uint64_t*>(ptr + offset);
+        offset += sizeof(uint64_t);
+
+        size_t group_size = *reinterpret_cast<const uint32_t*>(ptr + offset);
+        offset += sizeof(uint32_t);
+
+        size_t num_groups = *reinterpret_cast<const uint32_t*>(ptr + offset);
+        offset += sizeof(uint32_t);
+
+        size_t aligned_header = align_offset(HEADER_SIZE, alignment);
+        size_t padding = aligned_header - HEADER_SIZE;
+        if (padding > 0) {
+            file.seekg(padding, std::ios::cur);
+        }
+
+        std::vector<char> scales_buffer;
+        if (scales_bytes > 0) {
+            scales_buffer.resize(scales_bytes);
+            file.read(scales_buffer.data(), scales_bytes);
+
+            // Skip padding after scales
+            size_t scales_end = aligned_header + scales_bytes;
+            size_t data_start = align_offset(scales_end, alignment);
+            size_t scales_padding = data_start - scales_end;
+            if (scales_padding > 0) {
+                file.seekg(scales_padding, std::ios::cur);
+            }
+        }
+
+        // Read weight data
         std::vector<char> buffer(byte_size);
         file.read(buffer.data(), byte_size);
 
@@ -121,7 +193,7 @@ namespace GraphFile {
         size_t node_id = graph.input(shape, precision);
         graph.set_input(node_id, buffer.data(), precision);
 
-        if (precision == Precision::INT8 && group_size > 0 && num_groups > 0) {
+        if (scales_bytes > 0 && group_size > 0 && num_groups > 0) {
             auto& node_buffer = graph.nodes_[graph.node_index_map_.at(node_id)]->output_buffer;
             node_buffer.owned_scales = std::make_unique<char[]>(scales_buffer.size());
             std::memcpy(node_buffer.owned_scales.get(), scales_buffer.data(), scales_buffer.size());
@@ -134,33 +206,31 @@ namespace GraphFile {
     MappedFile mmap_load(const std::string& filename);
 }
 
-GraphFile::MappedFile::MappedFile(const std::string& filename) 
+GraphFile::MappedFile::MappedFile(const std::string& filename)
     : fd_(-1), mapped_data_(nullptr), file_size_(0), data_offset_(0) {
     fd_ = open(filename.c_str(), O_RDONLY);
     if (fd_ == -1) {
         throw std::runtime_error("Cannot open file for mapping: " + filename);
     }
-    
+
     struct stat st;
     if (fstat(fd_, &st) == -1) {
         close(fd_);
         throw std::runtime_error("Cannot get file size: " + filename);
     }
     file_size_ = st.st_size;
-    
+
     mapped_data_ = mmap(nullptr, file_size_, PROT_READ, MAP_SHARED, fd_, 0);
     if (mapped_data_ == MAP_FAILED) {
         close(fd_);
         throw std::runtime_error("Cannot map file: " + filename);
     }
 
-    madvise(mapped_data_, file_size_, MADV_SEQUENTIAL);
-    madvise(mapped_data_, file_size_, MADV_WILLNEED);
-
     close(fd_);
     fd_ = -1;
 
     parse_header();
+    apply_madvise_hints();
 }
 
 GraphFile::MappedFile::~MappedFile() {
@@ -180,7 +250,9 @@ GraphFile::MappedFile::MappedFile(MappedFile&& other) noexcept
       data_offset_(other.data_offset_), shape_(std::move(other.shape_)),
       precision_(other.precision_), byte_size_(other.byte_size_),
       group_size_(other.group_size_), num_groups_(other.num_groups_),
-      scales_offset_(other.scales_offset_), is_int4_(other.is_int4_),
+      scales_offset_(other.scales_offset_), scales_bytes_(other.scales_bytes_),
+      version_(other.version_), alignment_(other.alignment_),
+      is_int4_(other.is_int4_),
       unpacked_int4_data_(std::move(other.unpacked_int4_data_)) {
     other.fd_ = -1;
     other.mapped_data_ = nullptr;
@@ -207,6 +279,9 @@ GraphFile::MappedFile& GraphFile::MappedFile::operator=(MappedFile&& other) noex
         group_size_ = other.group_size_;
         num_groups_ = other.num_groups_;
         scales_offset_ = other.scales_offset_;
+        scales_bytes_ = other.scales_bytes_;
+        version_ = other.version_;
+        alignment_ = other.alignment_;
         is_int4_ = other.is_int4_;
         unpacked_int4_data_ = std::move(other.unpacked_int4_data_);
 
@@ -302,73 +377,86 @@ GraphFile::LoadedNode GraphFile::MappedFile::load_into_graph(CactusGraph& graph)
 }
 
 void GraphFile::MappedFile::parse_header() {
-    const char* ptr = static_cast<const char*>(mapped_data_);
-    size_t offset = 0;
-    
-    const size_t min_header_size = sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint64_t);
-    if (file_size_ < min_header_size) {
+    if (file_size_ < HEADER_SIZE) {
         throw std::runtime_error("File too small: insufficient data for header");
     }
-    
+
+    const char* ptr = static_cast<const char*>(mapped_data_);
+    size_t offset = 0;
+
+    uint32_t magic = *reinterpret_cast<const uint32_t*>(ptr + offset);
+    offset += sizeof(uint32_t);
+    if (magic != CACTUS_MAGIC) {
+        throw std::runtime_error("Invalid tensor file: missing CACT magic number");
+    }
+
+    version_ = *reinterpret_cast<const uint32_t*>(ptr + offset);
+    offset += sizeof(uint32_t);
+
+    uint32_t flags = *reinterpret_cast<const uint32_t*>(ptr + offset);
+    offset += sizeof(uint32_t);
+    (void)flags;  
+
+    alignment_ = *reinterpret_cast<const uint32_t*>(ptr + offset);
+    offset += sizeof(uint32_t);
+    if (alignment_ == 0) alignment_ = 1;
+
     uint32_t ndim = *reinterpret_cast<const uint32_t*>(ptr + offset);
     offset += sizeof(uint32_t);
-    
-   const size_t dims_size = ndim * sizeof(uint64_t);
-    if (offset + dims_size + sizeof(uint32_t) + sizeof(uint64_t) > file_size_) {
-        throw std::runtime_error("File corrupted: insufficient data for header with " + std::to_string(ndim) + " dimensions");
-    }
-    
-    shape_.resize(ndim);
-    for (uint32_t i = 0; i < ndim; i++) {
+
+    shape_.clear();
+    for (uint32_t i = 0; i < 4; i++) {
         uint64_t dim_val = *reinterpret_cast<const uint64_t*>(ptr + offset);
-        shape_[i] = static_cast<size_t>(dim_val);
         offset += sizeof(uint64_t);
+        if (i < ndim && dim_val > 0) {
+            shape_.push_back(static_cast<size_t>(dim_val));
+        }
     }
-    
+
     uint32_t prec_val = *reinterpret_cast<const uint32_t*>(ptr + offset);
     precision_ = static_cast<Precision>(prec_val);
     offset += sizeof(uint32_t);
 
     is_int4_ = (precision_ == Precision::INT4);
 
-    uint64_t size_val = *reinterpret_cast<const uint64_t*>(ptr + offset);
-    byte_size_ = static_cast<size_t>(size_val);
+    byte_size_ = *reinterpret_cast<const uint64_t*>(ptr + offset);
     offset += sizeof(uint64_t);
 
-    if (precision_ == Precision::INT8 || precision_ == Precision::INT4) {
-        if (offset + sizeof(uint32_t) + sizeof(uint64_t) > file_size_) {
-            throw std::runtime_error("File corrupted: missing group-wise quantization parameters for quantized tensor");
-        }
-        group_size_ = *reinterpret_cast<const uint32_t*>(ptr + offset);
-        offset += sizeof(uint32_t);
+    scales_bytes_ = *reinterpret_cast<const uint64_t*>(ptr + offset);
+    offset += sizeof(uint64_t);
 
-        num_groups_ = *reinterpret_cast<const uint64_t*>(ptr + offset);
-        offset += sizeof(uint64_t);
+    group_size_ = *reinterpret_cast<const uint32_t*>(ptr + offset);
+    offset += sizeof(uint32_t);
 
-        if (group_size_ > 0 && num_groups_ > 0) {
-            scales_offset_ = offset;
-            size_t N = shape_.size() >= 1 ? shape_[0] : 1;
-            size_t scales_byte_size = N * num_groups_ * sizeof(__fp16);
+    num_groups_ = *reinterpret_cast<const uint32_t*>(ptr + offset);
+    offset += sizeof(uint32_t);
 
-            if (scales_offset_ + scales_byte_size > file_size_) {
-                throw std::runtime_error("File corrupted: scales data extends beyond file size");
-            }
+    size_t aligned_header = align_offset(HEADER_SIZE, alignment_);
 
-            data_offset_ = scales_offset_ + scales_byte_size;
-        } else {
-            scales_offset_ = 0;
-            data_offset_ = offset;
-        }
+    if (scales_bytes_ > 0) {
+        scales_offset_ = aligned_header;
+        size_t scales_end = scales_offset_ + scales_bytes_;
+        data_offset_ = align_offset(scales_end, alignment_);
     } else {
-        group_size_ = 0;
-        num_groups_ = 0;
         scales_offset_ = 0;
-        data_offset_ = offset;
-        is_int4_ = false;
+        data_offset_ = aligned_header;
     }
 
     if (data_offset_ + byte_size_ > file_size_) {
-        throw std::runtime_error("File corrupted: data extends beyond file size");
+        throw std::runtime_error("File corrupted: data extends beyond file size (v2)");
+    }
+}
+
+void GraphFile::MappedFile::apply_madvise_hints() {
+
+    if (scales_bytes_ > 0 && scales_offset_ > 0) {
+        madvise(static_cast<char*>(mapped_data_) + scales_offset_, scales_bytes_, MADV_WILLNEED);
+    }
+
+    madvise(static_cast<char*>(mapped_data_) + data_offset_, byte_size_, MADV_SEQUENTIAL);
+
+    if (byte_size_ > 1024 * 1024) {
+        madvise(static_cast<char*>(mapped_data_) + data_offset_, byte_size_, MADV_WILLNEED);
     }
 }
 

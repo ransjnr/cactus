@@ -9,7 +9,30 @@ except ImportError:
     torch = None
 
 
-GROUP_SIZE = 128 
+GROUP_SIZE = 128
+
+CACTUS_MAGIC = b'CACT'
+CACTUS_VERSION = 1
+CACTUS_ALIGNMENT = 32
+
+FLAG_HAS_SCALES = 1 << 0
+FLAG_PAGE_ALIGNED = 1 << 1
+FLAG_TRANSPOSED = 1 << 2
+
+
+def align_offset(offset: int, alignment: int) -> int:
+    """Round up offset to next alignment boundary."""
+    remainder = offset % alignment
+    if remainder == 0:
+        return offset
+    return offset + (alignment - remainder)
+
+
+def compute_padding(current_offset: int, alignment: int) -> bytes:
+    """Compute padding bytes needed to reach alignment boundary."""
+    aligned = align_offset(current_offset, alignment)
+    padding_size = aligned - current_offset
+    return b'\x00' * padding_size
 
 
 def save_tensor_with_header(tensor, output_path, precision='FP16', transpose=False, stats_tracker=None, args=None, model_type=None):
@@ -117,15 +140,36 @@ def save_tensor_with_header(tensor, output_path, precision='FP16', transpose=Fal
 
         with open(output_path, 'wb') as f:
             ndim = len(shape)
-            f.write(struct.pack('<I', ndim))
-            for dim in shape:
-                f.write(struct.pack('<Q', dim))
-            f.write(struct.pack('<I', 0))  # Precision flag 0 = INT8
-            byte_size = quantized_flat.size
-            f.write(struct.pack('<Q', byte_size))
-            f.write(struct.pack('<I', GROUP_SIZE))
-            f.write(struct.pack('<Q', num_groups))
+            data_bytes = quantized_flat.size
+            scales_bytes = scales_fp16.size * 2
+            flags = FLAG_HAS_SCALES
+            if transpose:
+                flags |= FLAG_TRANSPOSED
+
+            # Fixed 64-byte header
+            f.write(CACTUS_MAGIC)                          # 4 bytes
+            f.write(struct.pack('<I', CACTUS_VERSION))     # 4 bytes
+            f.write(struct.pack('<I', flags))              # 4 bytes
+            f.write(struct.pack('<I', CACTUS_ALIGNMENT))   # 4 bytes
+            f.write(struct.pack('<I', ndim))               # 4 bytes
+
+            for i in range(4):
+                if i < ndim:
+                    f.write(struct.pack('<Q', shape[i]))
+                else:
+                    f.write(struct.pack('<Q', 0))          # 32 bytes total
+            f.write(struct.pack('<I', 0))                  # precision: 0 = INT8 (4 bytes)
+            f.write(struct.pack('<Q', data_bytes))         # 8 bytes
+            f.write(struct.pack('<Q', scales_bytes))       # 8 bytes
+            f.write(struct.pack('<I', GROUP_SIZE))         # 4 bytes
+            f.write(struct.pack('<I', num_groups))         # 4 bytes (changed from Q to I)
+            header_size = 80
+            f.write(compute_padding(header_size, CACTUS_ALIGNMENT))
+
             f.write(scales_fp16.tobytes())
+            scales_end = align_offset(header_size, CACTUS_ALIGNMENT) + scales_bytes
+            f.write(compute_padding(scales_end, CACTUS_ALIGNMENT))
+
             f.write(quantized_flat.tobytes())
 
         if stats_tracker:
@@ -184,15 +228,35 @@ def save_tensor_with_header(tensor, output_path, precision='FP16', transpose=Fal
 
             with open(output_path, 'wb') as f:
                 ndim = len(shape)
-                f.write(struct.pack('<I', ndim))
-                for dim in shape:
-                    f.write(struct.pack('<Q', dim))
-                f.write(struct.pack('<I', 3)) 
-                byte_size = packed.size  
-                f.write(struct.pack('<Q', byte_size))
-                f.write(struct.pack('<I', GROUP_SIZE))
-                f.write(struct.pack('<Q', num_groups))
+                data_bytes = packed.size
+                scales_bytes = scales_fp16.size * 2
+                flags = FLAG_HAS_SCALES
+                if transpose:
+                    flags |= FLAG_TRANSPOSED
+
+                # Fixed header
+                f.write(CACTUS_MAGIC)                          # 4 bytes
+                f.write(struct.pack('<I', CACTUS_VERSION))     # 4 bytes
+                f.write(struct.pack('<I', flags))              # 4 bytes
+                f.write(struct.pack('<I', CACTUS_ALIGNMENT))   # 4 bytes
+                f.write(struct.pack('<I', ndim))               # 4 bytes
+                for i in range(4):
+                    if i < ndim:
+                        f.write(struct.pack('<Q', shape[i]))
+                    else:
+                        f.write(struct.pack('<Q', 0))          # 32 bytes total
+                f.write(struct.pack('<I', 3))                  # precision: 3 = INT4 (4 bytes)
+                f.write(struct.pack('<Q', data_bytes))         # 8 bytes
+                f.write(struct.pack('<Q', scales_bytes))       # 8 bytes
+                f.write(struct.pack('<I', GROUP_SIZE))         # 4 bytes
+                f.write(struct.pack('<I', num_groups))         # 4 bytes
+                header_size = 80
+                f.write(compute_padding(header_size, CACTUS_ALIGNMENT))
+
                 f.write(scales_fp16.tobytes())
+                scales_end = align_offset(header_size, CACTUS_ALIGNMENT) + scales_bytes
+                f.write(compute_padding(scales_end, CACTUS_ALIGNMENT))
+
                 f.write(packed.tobytes())
 
             if stats_tracker:
@@ -213,14 +277,29 @@ def save_tensor_with_header(tensor, output_path, precision='FP16', transpose=Fal
 
     with open(output_path, 'wb') as f:
         ndim = len(shape)
-        f.write(struct.pack('<I', ndim))
-        for dim in shape:
-            f.write(struct.pack('<Q', dim))
+        data_bytes = data_flat.size * 2  # FP16 = 2 bytes
+        flags = 0
+        if transpose:
+            flags |= FLAG_TRANSPOSED
 
-        f.write(struct.pack('<I', 1))  # FP16 precision
-
-        byte_size = data_flat.size * 2  # FP16 = 2 bytes
-        f.write(struct.pack('<Q', byte_size))
+        # Fixed header (same structure, no scales)
+        f.write(CACTUS_MAGIC)                          # 4 bytes
+        f.write(struct.pack('<I', CACTUS_VERSION))     # 4 bytes
+        f.write(struct.pack('<I', flags))              # 4 bytes
+        f.write(struct.pack('<I', CACTUS_ALIGNMENT))   # 4 bytes
+        f.write(struct.pack('<I', ndim))               # 4 bytes
+        for i in range(4):
+            if i < ndim:
+                f.write(struct.pack('<Q', shape[i]))
+            else:
+                f.write(struct.pack('<Q', 0))          # 32 bytes total
+        f.write(struct.pack('<I', 1))                  # precision: 1 = FP16 (4 bytes)
+        f.write(struct.pack('<Q', data_bytes))         # 8 bytes
+        f.write(struct.pack('<Q', 0))                  # scales_bytes: 0 (8 bytes)
+        f.write(struct.pack('<I', 0))                  # group_size: 0 (4 bytes)
+        f.write(struct.pack('<I', 0))                  # num_groups: 0 (4 bytes)
+        header_size = 80
+        f.write(compute_padding(header_size, CACTUS_ALIGNMENT))
 
         f.write(data_flat.tobytes())
 

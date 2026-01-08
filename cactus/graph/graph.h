@@ -520,9 +520,13 @@ namespace GraphFile {
         size_t group_size_ = 0;
         size_t num_groups_ = 0;
         size_t scales_offset_ = 0;
-        bool is_int4_ = false; 
-        mutable std::unique_ptr<int8_t[]> unpacked_int4_data_;  
+        size_t scales_bytes_ = 0;
+        uint32_t version_ = 1;
+        uint32_t alignment_ = 32;
+        bool is_int4_ = false;
+        mutable std::unique_ptr<int8_t[]> unpacked_int4_data_;
         void parse_header();
+        void apply_madvise_hints();
         void unpack_int4_if_needed() const;  
     };
 
