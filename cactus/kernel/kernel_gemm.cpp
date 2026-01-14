@@ -1,6 +1,5 @@
 #include "kernel.h"
 #include "kernel_utils.h"
-#include "../graph/graph.h"
 #include <arm_neon.h>
 #include <cstring>
 #include <algorithm>
