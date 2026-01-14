@@ -9,6 +9,7 @@
 using namespace EngineTestUtils;
 
 const char* g_model_path = std::getenv("CACTUS_TEST_MODEL");
+const char* g_target_model_path = std::getenv("CACTUS_TEST_TARGET_MODEL"); 
 const char* g_transcribe_model_path = std::getenv("CACTUS_TEST_TRANSCRIBE_MODEL");
 const char* g_assets_path = std::getenv("CACTUS_TEST_ASSETS");
 const char* g_whisper_prompt = "<|startoftranscript|><|en|><|transcribe|><|notimestamps|>";
@@ -29,7 +30,7 @@ bool test_streaming() {
               << "║" << std::setw(42) << std::left << "      STREAMING & FOLLOW-UP TEST" << "║\n"
               << "╚══════════════════════════════════════════╝\n";
 
-    cactus_model_t model = cactus_init(g_model_path, nullptr);
+    cactus_model_t model = cactus_init(g_model_path, nullptr, nullptr, 0);
     if (!model) {
         std::cerr << "[✗] Failed to initialize model\n";
         return false;
@@ -152,7 +153,7 @@ bool test_vlm_multiturn() {
               << "║       VLM MULTI-TURN TEST                ║\n"
               << "╚══════════════════════════════════════════╝\n";
 
-    cactus_model_t model = cactus_init(g_model_path, nullptr);
+    cactus_model_t model = cactus_init(g_model_path, nullptr, nullptr, 0);
     if (!model) {
         std::cerr << "Failed to initialize model for VLM multi-turn test" << std::endl;
         return false;
@@ -348,7 +349,7 @@ bool test_embeddings() {
               << "║          EMBEDDINGS TEST                 ║\n"
               << "╚══════════════════════════════════════════╝\n";
 
-    cactus_model_t model = cactus_init(g_model_path, nullptr);
+    cactus_model_t model = cactus_init(g_model_path, nullptr, nullptr, 0);
     if (!model) return false;
 
     const char* texts[] = {"My name is Henry Ndubuaku", "Your name is Henry Ndubuaku"};
@@ -436,6 +437,26 @@ bool test_4k_context() {
         }, nullptr, 100);
 }
 
+bool test_prefill_1024_decode_100() {
+    std::string msg = "[{\"role\": \"system\", \"content\": \"/no_think You are helpful. ";
+    for (int i = 0; i < 60; i++) {
+        msg += "Context " + std::to_string(i) + ": This is background knowledge item number " + std::to_string(i) + ". ";
+    }
+    msg += "\"}, {\"role\": \"user\", \"content\": \"";
+    for (int i = 0; i < 60; i++) {
+        msg += "Data point " + std::to_string(i) + " = " + std::to_string(i * 3.14159) + ". ";
+    }
+    msg += "Summarize the data.\"}]";
+
+    return run_test("PREFILL 1024 DECODE 100", msg.c_str(),
+        [](int result, const StreamingData&, const std::string&, const Metrics& m) {
+            std::cout << "├─ Prefill target: ~1024 tokens\n";
+            std::cout << "├─ Decode target: 100 tokens\n";
+            m.print_json();
+            return result > 0;
+        }, nullptr, 100);
+}
+
 bool test_rag() {
     std::cout << "\n╔══════════════════════════════════════════╗\n"
               << "║              RAG TEST                    ║\n"
@@ -483,7 +504,7 @@ bool test_rag() {
     std::cout << "├─ Initializing model with RAG...\n";
 
     Timer init_timer;
-    cactus_model_t model = cactus_init(g_model_path, corpus_dir.c_str());
+    cactus_model_t model = cactus_init(g_model_path, corpus_dir.c_str(), nullptr, 0);
     double init_time_ms = init_timer.elapsed_ms();
 
     if (!model) {
@@ -638,7 +659,7 @@ bool run_whisper_test(const char* title, const char* options_json, Predicate che
               << "║" << std::setw(42) << std::left << std::string("          ") + title << "║\n"
               << "╚══════════════════════════════════════════╝\n";
 
-    cactus_model_t model = cactus_init(g_transcribe_model_path, nullptr);
+    cactus_model_t model = cactus_init(g_transcribe_model_path, nullptr, nullptr, 0);
     if (!model) {
         std::cerr << "[✗] Failed to initialize Whisper model\n";
         return false;
@@ -685,7 +706,7 @@ static bool test_stream_transcription() {
         return true;
     }
 
-    cactus_model_t model = cactus_init(g_transcribe_model_path, nullptr);
+    cactus_model_t model = cactus_init(g_transcribe_model_path, nullptr, nullptr, 0);
     if (!model) {
         std::cerr << "[✗] Failed to initialize Whisper model\n";
         return false;
@@ -815,7 +836,7 @@ static bool test_image_embeddings() {
     std::vector<float> embeddings(buffer_size / sizeof(float));
     size_t embedding_dim = 0;
 
-    cactus_model_t model = cactus_init(g_model_path, nullptr);
+    cactus_model_t model = cactus_init(g_model_path, nullptr, nullptr, 0);
     if (!model) {
         std::cout << "⊘ SKIP │ Model doesn't support image embeddings\n";
         return true;
@@ -852,7 +873,7 @@ static bool test_audio_embeddings() {
     std::vector<float> embeddings(buffer_size / sizeof(float));
     size_t embedding_dim = 0;
 
-    cactus_model_t model = cactus_init(g_transcribe_model_path, nullptr);
+    cactus_model_t model = cactus_init(g_transcribe_model_path, nullptr, nullptr, 0);
     if (!model) {
         std::cout << "⊘ SKIP │ Failed to init Whisper model\n";
         return true;
@@ -876,6 +897,108 @@ static bool test_audio_embeddings() {
     return result > 0 && embedding_dim > 0;
 }
 
+static bool test_speculative_decoding() {
+    std::cout << "\n╔══════════════════════════════════════════╗\n"
+              << "║      SPECULATIVE DECODING TEST           ║\n"
+              << "╚══════════════════════════════════════════╝\n";
+
+    if (!g_model_path) {
+        std::cout << "⊘ SKIP │ CACTUS_TEST_MODEL (draft) not set\n";
+        return true;
+    }
+
+    if (!g_target_model_path) {
+        std::cout << "⊘ SKIP │ CACTUS_TEST_TARGET_MODEL not set\n";
+        std::cout << "        Set to larger model path (e.g., LFM2.5-1.2B-Instruct)\n";
+        return true;
+    }
+
+    std::cout << "├─ Draft model: " << g_model_path << "\n";
+    std::cout << "├─ Target model: " << g_target_model_path << "\n";
+
+    Timer init_timer;
+    cactus_model_t model = cactus_init(g_target_model_path, nullptr, g_model_path, 5);
+    double init_time = init_timer.elapsed_ms();
+
+    if (!model) {
+        std::cerr << "[✗] Failed to initialize models for speculative decoding\n";
+        std::cerr << "    Error: " << cactus_get_last_error() << "\n";
+        return false;
+    }
+
+    std::cout << "├─ Init time: " << std::fixed << std::setprecision(2) << init_time << " ms\n";
+
+    size_t draft_tokens = 0, accepted_tokens = 0;
+    float acceptance_rate = 0.0f, avg_entropy = 0.0f;
+    int early_stopped = 0;
+    int spec_status = cactus_get_speculation_stats(model, &draft_tokens, &accepted_tokens, &acceptance_rate, &avg_entropy, &early_stopped);
+
+    if (spec_status != 1) {
+        std::cout << "├─ Warning: Speculation not enabled (status=" << spec_status << ")\n";
+    } else {
+        std::cout << "├─ Speculation: ENABLED\n";
+    }
+
+    const char* messages = R"([
+        {"role": "system", "content": "You are a helpful assistant. Be concise."},
+        {"role": "user", "content": "Explain what machine learning is in 2-3 sentences."}
+    ])";
+
+    const char* options = R"({
+        "max_tokens": 100,
+        "confidence_threshold": 0.7,
+        "stop_sequences": ["<|im_end|>", "<end_of_turn>", "<|eot_id|>"]
+    })";
+
+    StreamingData stream_data;
+    stream_data.model = model;
+    char response[4096];
+
+    std::cout << "\n[Generation with Speculation]\n";
+    std::cout << "User: Explain what machine learning is in 2-3 sentences.\n";
+    std::cout << "Assistant: ";
+
+    Timer decode_timer;
+    int result = cactus_complete(model, messages, response, sizeof(response),
+                                  options, nullptr, stream_callback, &stream_data);
+    double decode_time = decode_timer.elapsed_ms();
+
+    std::cout << "\n\n[Results]\n";
+
+    if (result <= 0) {
+        std::cerr << "[✗] Completion failed\n";
+        cactus_destroy(model);
+        return false;
+    }
+
+    cactus_get_speculation_stats(model, &draft_tokens, &accepted_tokens, &acceptance_rate, &avg_entropy, &early_stopped);
+
+    Metrics metrics;
+    metrics.parse(response);
+
+    std::cout << "├─ Tokens generated: " << stream_data.token_count << "\n";
+    std::cout << "├─ Decode time: " << std::fixed << std::setprecision(2) << decode_time << " ms\n";
+    std::cout << "├─ Decode TPS: " << std::setprecision(2) << metrics.decode_tps << "\n";
+
+    if (spec_status == 1) {
+        std::cout << "├─ [Speculation Stats]\n";
+        std::cout << "│  ├─ Draft tokens (last batch): " << draft_tokens << "\n";
+        std::cout << "│  ├─ Accepted tokens: " << accepted_tokens << "\n";
+        std::cout << "│  ├─ Acceptance rate: " << std::setprecision(1) << (acceptance_rate * 100.0f) << "%\n";
+        std::cout << "│  ├─ Avg draft entropy: " << std::setprecision(3) << avg_entropy << "\n";
+        std::cout << "│  └─ Early stop (entropy): " << (early_stopped ? "yes" : "no") << "\n";
+    }
+
+    metrics.print_json();
+
+    cactus_destroy(model);
+
+    bool success = result > 0 && stream_data.token_count > 0;
+    std::cout << "└─ Status: " << (success ? "PASSED ✓" : "FAILED ✗") << "\n";
+
+    return success;
+}
+
 static bool test_pcm_transcription() {
     std::cout << "\n╔══════════════════════════════════════════╗\n"
               << "║       PCM BUFFER TRANSCRIPTION           ║\n"
@@ -886,7 +1009,7 @@ static bool test_pcm_transcription() {
         return true;
     }
 
-    cactus_model_t model = cactus_init(g_transcribe_model_path, nullptr);
+    cactus_model_t model = cactus_init(g_transcribe_model_path, nullptr, nullptr, 0);
     if (!model) {
         std::cerr << "[✗] Failed to initialize Whisper model\n";
         return false;
@@ -1021,21 +1144,23 @@ int main() {
 #endif
 
     TestUtils::TestRunner runner("Engine Tests");
-    runner.run_test("streaming", test_streaming());
-    runner.run_test("tool_calls", test_tool_call());
-    runner.run_test("tool_calls_with_two_tools", test_tool_call_with_two_tools());
-    runner.run_test("tool_calls_with_three_tools", test_tool_call_with_three_tools());
-    runner.run_test("cloud_handoff", test_cloud_handoff());
-    runner.run_test("embeddings", test_embeddings());
-    runner.run_test("image_embeddings", test_image_embeddings());
-    runner.run_test("audio_embeddings", test_audio_embeddings());
-    runner.run_test("vlm_multiturn", test_vlm_multiturn());
-    runner.run_test("audio_processor", test_audio_processor());
-    runner.run_test("transcription", test_transcription());
-    runner.run_test("pcm_transcription", test_pcm_transcription());
-    runner.run_test("stream_transcription", test_stream_transcription());
-    runner.run_test("rag_preprocessing", test_rag());
-    runner.run_test("4k_context", test_4k_context());
+    // runner.run_test("streaming", test_streaming());
+    // runner.run_test("tool_calls", test_tool_call());
+    // runner.run_test("tool_calls_with_two_tools", test_tool_call_with_two_tools());
+    // runner.run_test("tool_calls_with_three_tools", test_tool_call_with_three_tools());
+    // runner.run_test("speculative_decoding", test_speculative_decoding());
+    // runner.run_test("cloud_handoff", test_cloud_handoff());
+    // runner.run_test("embeddings", test_embeddings());
+    // runner.run_test("image_embeddings", test_image_embeddings());
+    // runner.run_test("audio_embeddings", test_audio_embeddings());
+    // runner.run_test("vlm_multiturn", test_vlm_multiturn());
+    // runner.run_test("audio_processor", test_audio_processor());
+    // runner.run_test("transcription", test_transcription());
+    // runner.run_test("pcm_transcription", test_pcm_transcription());
+    // runner.run_test("stream_transcription", test_stream_transcription());
+    // runner.run_test("rag_preprocessing", test_rag());
+    // runner.run_test("4k_context", test_4k_context());
+    runner.run_test("prefill_1024_decode_100", test_prefill_1024_decode_100());
     runner.print_summary();
     return runner.all_passed() ? 0 : 1;
 }

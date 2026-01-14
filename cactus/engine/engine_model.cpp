@@ -12,6 +12,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <random>
 
 namespace cactus {
 namespace engine {
@@ -736,6 +737,209 @@ void Model::prefill_npu(const std::vector<uint32_t>& tokens) {
             }
         }
     }
+}
+
+Model::SpeculativeResult Model::speculative_decode(
+    Model& draft_model,
+    const std::vector<uint32_t>& input_tokens,
+    size_t max_candidates,
+    float confidence_threshold,
+    float temperature,
+    float top_p,
+    size_t top_k
+) {
+    SpeculativeResult result;
+
+    if (temperature < 0) temperature = config_.default_temperature;
+    if (top_p < 0) top_p = config_.default_top_p;
+    if (top_k == 0) top_k = config_.default_top_k;
+    std::vector<uint32_t> draft_tokens;
+    draft_tokens.reserve(max_candidates);
+
+    if (input_tokens.empty()) {
+        result.tokens_accepted = 0;
+        result.acceptance_rate = 0.0f;
+        return result;
+    }
+
+    std::vector<uint32_t> context = input_tokens;
+    float entropy_sum = 0.0f;
+
+    const size_t ENTROPY_WINDOW_SIZE = 10;
+    std::vector<float> entropy_window;
+
+    for (size_t i = 0; i < max_candidates; ++i) {
+        float token_entropy = 0.0f;
+        uint32_t draft_token = draft_model.decode(context, temperature, top_p, top_k, "", &token_entropy);
+
+        entropy_sum += token_entropy;
+        result.draft_tokens_generated++;
+
+        entropy_window.push_back(token_entropy);
+        if (entropy_window.size() > ENTROPY_WINDOW_SIZE) {
+            entropy_window.erase(entropy_window.begin());
+        }
+
+        float rolling_entropy = 0.0f;
+        for (float e : entropy_window) {
+            rolling_entropy += e;
+        }
+        rolling_entropy /= static_cast<float>(entropy_window.size());
+        float rolling_confidence = 1.0f - rolling_entropy;
+
+        draft_tokens.push_back(draft_token);
+        context = {draft_token};
+
+        if (confidence_threshold > 0.0f && entropy_window.size() >= ENTROPY_WINDOW_SIZE &&
+            rolling_confidence < confidence_threshold) {
+            result.early_stop_entropy = true;
+            break;
+        }
+    }
+
+    result.avg_draft_entropy = result.draft_tokens_generated > 0 ?
+        entropy_sum / static_cast<float>(result.draft_tokens_generated) : 0.0f;
+
+    if (draft_tokens.empty()) {
+        result.tokens_accepted = 0;
+        result.acceptance_rate = 0.0f;
+        return result;
+    }
+
+    std::vector<uint32_t> verify_tokens = input_tokens;
+    verify_tokens.insert(verify_tokens.end(), draft_tokens.begin(), draft_tokens.end());
+    auto all_logits = verify_candidates(verify_tokens, draft_tokens.size());
+
+    if (all_logits.empty()) {
+        draft_model.kv_cache_.rollback(draft_tokens.size());
+        result.tokens_accepted = 0;
+        result.acceptance_rate = 0.0f;
+        return result;
+    }
+
+    size_t accepted = 0;
+
+    for (size_t i = 0; i < draft_tokens.size() && i < all_logits.size(); ++i) {
+        const auto& logits = all_logits[i];
+        uint32_t draft_token = draft_tokens[i];
+
+        if (draft_token >= logits.size()) {
+            break;
+        }
+
+        float max_logit = *std::max_element(logits.begin(), logits.end());
+        float sum_exp = 0.0f;
+        for (float l : logits) {
+            sum_exp += std::exp(l - max_logit);
+        }
+        float target_prob = std::exp(logits[draft_token] - max_logit) / sum_exp;
+
+        if (target_prob > 0.01f) {
+            result.tokens.push_back(draft_token);
+            accepted++;
+        } else {
+            size_t top_idx = 0;
+            float top_val = logits[0];
+            for (size_t j = 1; j < logits.size(); ++j) {
+                if (logits[j] > top_val) {
+                    top_val = logits[j];
+                    top_idx = j;
+                }
+            }
+            result.tokens.push_back(static_cast<uint32_t>(top_idx));
+            break;
+        }
+    }
+
+    size_t tokens_to_output = result.tokens.size();
+
+    size_t draft_tokens_to_keep = 1 + accepted; 
+    size_t draft_added = draft_tokens.size(); 
+    size_t draft_to_rollback = (draft_added > draft_tokens_to_keep)
+        ? (draft_added - draft_tokens_to_keep) : 0;
+
+    size_t target_tokens_to_keep = 1 + accepted;
+    size_t target_added = 1 + draft_tokens.size(); 
+    size_t target_to_rollback = (target_added > target_tokens_to_keep)
+        ? (target_added - target_tokens_to_keep) : 0;
+
+    if (draft_to_rollback > 0) {
+        draft_model.kv_cache_.rollback(draft_to_rollback);
+    }
+    if (target_to_rollback > 0) {
+        kv_cache_.rollback(target_to_rollback);
+    }
+
+    (void)tokens_to_output;
+
+    result.tokens_accepted = accepted;
+    result.acceptance_rate = draft_tokens.empty() ? 0.0f :
+        static_cast<float>(accepted) / static_cast<float>(draft_tokens.size());
+
+    return result;
+}
+
+std::vector<std::vector<float>> Model::verify_candidates(
+    const std::vector<uint32_t>& candidates,
+    size_t num_candidates
+) {
+    std::vector<std::vector<float>> all_logits;
+
+    if (candidates.empty() || num_candidates == 0) {
+        return all_logits;
+    }
+
+    auto final_hidden = forward(candidates, true);
+
+    auto* gb = static_cast<CactusGraph*>(graph_handle_);
+    auto backend = config_.default_backend == Config::Backend::CPU
+        ? ComputeBackend::CPU
+        : ComputeBackend::NPU;
+
+   size_t start_pos = candidates.size() - num_candidates - 1;
+    const auto& hidden_buf = gb->get_output_buffer(final_hidden);
+
+    if (hidden_buf.shape.size() < 2) {
+        return all_logits;
+    }
+
+   auto draft_hidden = gb->slice(final_hidden, 0, start_pos, num_candidates);
+
+    auto logits_node = gb->matmul(draft_hidden, output_weight_node_id_, true, backend);
+
+    gb->execute();
+
+    const auto& logits_buf = gb->get_output_buffer(logits_node);
+    void* logits_ptr = gb->get_output(logits_node);
+
+    if (!logits_ptr || logits_buf.shape.empty()) {
+        return all_logits;
+    }
+
+    size_t vocab_size = logits_buf.shape.back();
+    size_t num_positions = logits_buf.total_size / vocab_size;
+
+    all_logits.resize(num_positions);
+
+    for (size_t i = 0; i < num_positions; ++i) {
+        all_logits[i].resize(vocab_size);
+
+        if (logits_buf.precision == Precision::FP32) {
+            const float* src = static_cast<const float*>(logits_ptr) + i * vocab_size;
+            std::copy(src, src + vocab_size, all_logits[i].begin());
+        } else if (logits_buf.precision == Precision::FP16) {
+            const __fp16* src = static_cast<const __fp16*>(logits_ptr) + i * vocab_size;
+            Quantization::fp16_to_fp32(const_cast<__fp16*>(src), all_logits[i].data(), vocab_size);
+        } else {
+            const int8_t* src = static_cast<const int8_t*>(logits_ptr) + i * vocab_size;
+            Quantization::int8_to_fp32(const_cast<int8_t*>(src), all_logits[i].data(), vocab_size, 1.0f);
+        }
+    }
+
+    post_execute_updates(gb, candidates.size());
+    update_kv_cache(gb, candidates.size());
+
+    return all_logits;
 }
 
 double Model::score_tokens_window_logprob(

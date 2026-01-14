@@ -5,9 +5,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// ----------------------------------------------------------------------------
-// Export Macros
-// ----------------------------------------------------------------------------
 
 #if __GNUC__ >= 4
     #define CACTUS_FFI_EXPORT __attribute__((visibility("default")))
@@ -21,9 +18,6 @@
 extern "C" {
 #endif
 
-// ----------------------------------------------------------------------------
-// Types
-// ----------------------------------------------------------------------------
 
 typedef void* cactus_model_t;
 typedef void* cactus_index_t;
@@ -31,22 +25,27 @@ typedef void* cactus_stream_transcribe_t;
 
 typedef void (*cactus_token_callback)(const char* token, uint32_t token_id, void* user_data);
 
-// ----------------------------------------------------------------------------
-// Model Lifecycle
-// ----------------------------------------------------------------------------
 
 CACTUS_FFI_EXPORT cactus_model_t cactus_init(
     const char* model_path,
-    const char* corpus_dir                  // optional: NULL if no RAG corpus
+    const char* corpus_dir,                 // optional: NULL to disable RAG
+    const char* draft_model_path,           // optional: NULL to disable speculation
+    size_t speculation_length               // 0 uses default (5), ignored if no draft model
 );
 
 CACTUS_FFI_EXPORT void cactus_destroy(cactus_model_t model);
 CACTUS_FFI_EXPORT void cactus_reset(cactus_model_t model);
 CACTUS_FFI_EXPORT void cactus_stop(cactus_model_t model);
 
-// ----------------------------------------------------------------------------
-// Text Completion
-// ----------------------------------------------------------------------------
+CACTUS_FFI_EXPORT int cactus_get_speculation_stats(
+    cactus_model_t model,
+    size_t* draft_tokens,
+    size_t* accepted_tokens,
+    float* acceptance_rate,
+    float* avg_draft_entropy,              
+    int* early_stopped   
+);
+
 
 CACTUS_FFI_EXPORT int cactus_complete(
     cactus_model_t model,
@@ -59,9 +58,6 @@ CACTUS_FFI_EXPORT int cactus_complete(
     void* user_data                         // optional
 );
 
-// ----------------------------------------------------------------------------
-// Tokenization
-// ----------------------------------------------------------------------------
 
 CACTUS_FFI_EXPORT int cactus_tokenize(
     cactus_model_t model,
@@ -82,9 +78,6 @@ CACTUS_FFI_EXPORT int cactus_score_window(
     size_t buffer_size
 );
 
-// ----------------------------------------------------------------------------
-// Audio Transcription
-// ----------------------------------------------------------------------------
 
 CACTUS_FFI_EXPORT int cactus_transcribe(
     cactus_model_t model,
@@ -99,9 +92,6 @@ CACTUS_FFI_EXPORT int cactus_transcribe(
     size_t pcm_buffer_size
 );
 
-// ----------------------------------------------------------------------------
-// Streaming Transcription
-// ----------------------------------------------------------------------------
 
 CACTUS_FFI_EXPORT cactus_stream_transcribe_t cactus_stream_transcribe_init(
     cactus_model_t model
@@ -130,9 +120,6 @@ CACTUS_FFI_EXPORT void cactus_stream_transcribe_destroy(
     cactus_stream_transcribe_t stream
 );
 
-// ----------------------------------------------------------------------------
-// Embeddings
-// ----------------------------------------------------------------------------
 
 CACTUS_FFI_EXPORT int cactus_embed(
     cactus_model_t model,
@@ -159,9 +146,6 @@ CACTUS_FFI_EXPORT int cactus_audio_embed(
     size_t* embedding_dim
 );
 
-// ----------------------------------------------------------------------------
-// RAG (Retrieval-Augmented Generation)
-// ----------------------------------------------------------------------------
 
 CACTUS_FFI_EXPORT int cactus_rag_query(
     cactus_model_t model,
@@ -171,9 +155,6 @@ CACTUS_FFI_EXPORT int cactus_rag_query(
     size_t top_k
 );
 
-// ----------------------------------------------------------------------------
-// Vector Index
-// ----------------------------------------------------------------------------
 
 CACTUS_FFI_EXPORT cactus_index_t cactus_index_init(
     const char* index_dir,
@@ -223,9 +204,6 @@ CACTUS_FFI_EXPORT int cactus_index_query(
 CACTUS_FFI_EXPORT int cactus_index_compact(cactus_index_t index);
 CACTUS_FFI_EXPORT void cactus_index_destroy(cactus_index_t index);
 
-// ----------------------------------------------------------------------------
-// Utilities
-// ----------------------------------------------------------------------------
 
 CACTUS_FFI_EXPORT const char* cactus_get_last_error(void);
 CACTUS_FFI_EXPORT void cactus_set_telemetry_token(const char* token);

@@ -54,17 +54,29 @@ inline double get_ram_usage_mb() {
 
 struct CactusModelHandle {
     std::unique_ptr<cactus::engine::Model> model;
+    std::unique_ptr<cactus::engine::Model> draft_model; 
     std::atomic<bool> should_stop;
     std::vector<uint32_t> processed_tokens;
     std::mutex model_mutex;
     std::string model_name;
+    std::string draft_model_name;
     std::unique_ptr<cactus::engine::index::Index> corpus_index;
     std::string corpus_dir;
     size_t corpus_embedding_dim = 0;
     std::vector<std::vector<float>> tool_embeddings;
-    std::vector<std::string> tool_texts;  
+    std::vector<std::string> tool_texts;
+    size_t speculation_length = 5;
+    bool speculation_enabled = false;
+
+    size_t last_draft_tokens = 0;
+    size_t last_accepted_tokens = 0;
+    float last_acceptance_rate = 0.0f;
+    float last_avg_draft_entropy = 0.0f;
+    bool last_early_stop = false;
 
     CactusModelHandle() : should_stop(false) {}
+
+    bool has_speculation() const { return speculation_enabled && draft_model != nullptr; }
 };
 
 extern std::string last_error_message;
@@ -305,8 +317,8 @@ inline void parse_options_json(const std::string& json,
     top_k = 0;
     max_tokens = 100;
     force_tools = false;
-    tool_rag_top_k = 2;  // 0 = disabled, N = select top N relevant tools
-    confidence_threshold = 0.7f;  // trigger cloud handoff when confidence < this value
+    tool_rag_top_k = 2; 
+    confidence_threshold = 0.7f;  
     stop_sequences.clear();
 
     if (json.empty()) return;

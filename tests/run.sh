@@ -7,9 +7,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 DEFAULT_MODEL="LiquidAI/LFM2-VL-450M"
+DEFAULT_TARGET_MODEL="LiquidAI/LFM2.5-1.2B-Instruct"  # For speculative decoding (larger model)
 DEFAULT_TRANSCRIBE_MODEL="openai/whisper-small"
 
 MODEL_NAME="$DEFAULT_MODEL"
+TARGET_MODEL_NAME="$DEFAULT_TARGET_MODEL"
 TRANSCRIBE_MODEL_NAME="$DEFAULT_TRANSCRIBE_MODEL"
 ANDROID_MODE=false
 IOS_MODE=false
@@ -23,6 +25,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --transcribe_model)
             TRANSCRIBE_MODEL_NAME="$2"
+            shift 2
+            ;;
+        --target_model)
+            TARGET_MODEL_NAME="$2"
             shift 2
             ;;
         --android)
@@ -43,6 +49,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --model <name>            Model to use for tests (default: $DEFAULT_MODEL)"
             echo "  --transcribe_model <name> Transcribe model to use (default: $DEFAULT_TRANSCRIBE_MODEL)"
+            echo "  --target_model <name>     Target model for speculative decoding (default: none, skips spec decode test)"
             echo "  --android                 Run tests on Android device or emulator"
             echo "  --ios                     Run tests on iOS device or simulator"
             echo "  --no-rebuild              Skip building cactus library and tests"
@@ -60,6 +67,7 @@ done
 echo ""
 echo "Using model: $MODEL_NAME"
 echo "Using transcribe model: $TRANSCRIBE_MODEL_NAME"
+echo "Using target model: $TARGET_MODEL_NAME"
 
 echo ""
 echo "Step 1: Downloading model weights..."
@@ -71,6 +79,13 @@ fi
 if ! cactus download "$TRANSCRIBE_MODEL_NAME"; then
     echo "Failed to download transcribe model weights"
     exit 1
+fi
+
+if [ -n "$TARGET_MODEL_NAME" ]; then
+    if ! cactus download "$TARGET_MODEL_NAME"; then
+        echo "Failed to download target model weights"
+        exit 1
+    fi
 fi
 
 echo ""
@@ -124,8 +139,16 @@ export CACTUS_TEST_TRANSCRIBE_MODEL="$PROJECT_ROOT/weights/$TRANSCRIBE_MODEL_DIR
 export CACTUS_TEST_ASSETS="$PROJECT_ROOT/tests/assets"
 export CACTUS_INDEX_PATH="$PROJECT_ROOT/tests/assets"
 
+if [ -n "$TARGET_MODEL_NAME" ]; then
+    TARGET_MODEL_DIR=$(echo "$TARGET_MODEL_NAME" | sed 's|.*/||' | tr '[:upper:]' '[:lower:]')
+    export CACTUS_TEST_TARGET_MODEL="$PROJECT_ROOT/weights/$TARGET_MODEL_DIR"
+fi
+
 echo "Using model path: $CACTUS_TEST_MODEL"
 echo "Using transcribe model path: $CACTUS_TEST_TRANSCRIBE_MODEL"
+if [ -n "$TARGET_MODEL_NAME" ]; then
+    echo "Using target model path: $CACTUS_TEST_TARGET_MODEL"
+fi
 echo "Using assets path: $CACTUS_TEST_ASSETS"
 echo "Using index path: $CACTUS_INDEX_PATH"
 

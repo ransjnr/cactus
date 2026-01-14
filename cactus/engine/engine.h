@@ -363,6 +363,8 @@ struct KVCache {
     void* get_key_ptr(size_t layer);
     void* get_value_ptr(size_t layer);
 
+    void rollback(size_t n_positions);
+
     struct CircularView {
         const void* ptr1;
         const void* ptr2;  
@@ -509,6 +511,30 @@ public:
     virtual std::vector<float> get_audio_embeddings(const std::vector<float>& mel_bins);
 
     virtual void reset_cache() { kv_cache_.reset(); }
+
+    struct SpeculativeResult {
+        std::vector<uint32_t> tokens;
+        size_t draft_tokens_generated = 0;
+        size_t tokens_accepted = 0;
+        float acceptance_rate = 0.0f;
+        float avg_draft_entropy = 0.0f; 
+        bool early_stop_entropy = false; 
+    };
+
+    virtual SpeculativeResult speculative_decode(
+        Model& draft_model,
+        const std::vector<uint32_t>& input_tokens,
+        size_t max_candidates,
+        float confidence_threshold = 0.0f,
+        float temperature = -1.0f,
+        float top_p = -1.0f,
+        size_t top_k = 0
+    );
+
+    virtual std::vector<std::vector<float>> verify_candidates(
+        const std::vector<uint32_t>& candidates,
+        size_t num_candidates
+    );
 
     double score_tokens_window_logprob(const std::vector<uint32_t>& tokens, size_t start, size_t end, size_t context, size_t* tokens_scored);
 

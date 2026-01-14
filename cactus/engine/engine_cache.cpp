@@ -50,6 +50,22 @@ void KVCache::reset() {
     total_seq_len = 0;
 }
 
+void KVCache::rollback(size_t n_positions) {
+    if (n_positions == 0) return;
+
+    if (n_positions >= current_seq_len) {
+        current_seq_len = 0;
+        total_seq_len = 0;
+    } else {
+        current_seq_len -= n_positions;
+        if (n_positions <= total_seq_len) {
+            total_seq_len -= n_positions;
+        } else {
+            total_seq_len = 0;
+        }
+    }
+}
+
 void* KVCache::get_key_ptr(size_t layer) {
     if (current_seq_len == 0 || layer >= num_layers) return nullptr;
     return layer_caches[layer].keys.data();

@@ -344,12 +344,18 @@ const char* cactus_get_last_error() {
     return last_error_message.c_str();
 }
 
-cactus_model_t cactus_init(const char* model_path, const char* corpus_dir) {
+cactus_model_t cactus_init(
+    const char* model_path,
+    const char* corpus_dir,
+    const char* draft_model_path,
+    size_t speculation_length
+) {
     CactusTelemetry::getInstance().ensureInitialized();
 
-    constexpr size_t DEFAULT_CONTEXT_SIZE = 512;  // matches default sliding window size
+    constexpr size_t DEFAULT_CONTEXT_SIZE = 512;
 
     std::string model_path_str = model_path ? std::string(model_path) : "unknown";
+    std::string draft_path_str = draft_model_path ? std::string(draft_model_path) : "";
 
     std::string model_name = model_path_str;
     size_t last_slash = model_path_str.find_last_of("/\\");
@@ -357,7 +363,18 @@ cactus_model_t cactus_init(const char* model_path, const char* corpus_dir) {
         model_name = model_path_str.substr(last_slash + 1);
     }
 
+    std::string draft_model_name = draft_path_str;
+    if (!draft_path_str.empty()) {
+        last_slash = draft_path_str.find_last_of("/\\");
+        if (last_slash != std::string::npos) {
+            draft_model_name = draft_path_str.substr(last_slash + 1);
+        }
+    }
+
     CACTUS_LOG_INFO("init", "Loading model: " << model_name << " from " << model_path_str);
+    if (!draft_path_str.empty()) {
+        CACTUS_LOG_INFO("init", "Loading draft model: " << draft_model_name << " for speculative decoding");
+    }
 
     try {
         auto* handle = new CactusModelHandle();
@@ -367,11 +384,7 @@ cactus_model_t cactus_init(const char* model_path, const char* corpus_dir) {
         if (!handle->model) {
             last_error_message = "Failed to create model - check config.txt exists at: " + model_path_str;
             CACTUS_LOG_ERROR("init", last_error_message);
-
-            CactusTelemetry::getInstance().recordInit(
-                model_name, false, last_error_message
-            );
-
+            CactusTelemetry::getInstance().recordInit(model_name, false, last_error_message);
             delete handle;
             return nullptr;
         }
@@ -379,15 +392,33 @@ cactus_model_t cactus_init(const char* model_path, const char* corpus_dir) {
         if (!handle->model->init(model_path, DEFAULT_CONTEXT_SIZE)) {
             last_error_message = "Failed to initialize model - check weight files at: " + model_path_str;
             CACTUS_LOG_ERROR("init", last_error_message);
-
-            CactusTelemetry::getInstance().recordInit(
-                model_name, false, last_error_message
-            );
-
+            CactusTelemetry::getInstance().recordInit(model_name, false, last_error_message);
             delete handle;
             return nullptr;
         }
 
+        // Initialize draft model for speculative decoding (if provided)
+        if (!draft_path_str.empty()) {
+            handle->draft_model = create_model(draft_model_path);
+            handle->draft_model_name = draft_model_name;
+
+            if (!handle->draft_model) {
+                last_error_message = "Failed to create draft model - check config.txt exists at: " + draft_path_str;
+                CACTUS_LOG_ERROR("init", last_error_message);
+                handle->speculation_enabled = false;
+            } else if (!handle->draft_model->init(draft_model_path, DEFAULT_CONTEXT_SIZE)) {
+                last_error_message = "Failed to initialize draft model - check weight files at: " + draft_path_str;
+                CACTUS_LOG_ERROR("init", last_error_message);
+                handle->draft_model.reset();
+                handle->speculation_enabled = false;
+            } else {
+                handle->speculation_enabled = true;
+                handle->speculation_length = speculation_length > 0 ? speculation_length : 5;
+                CACTUS_LOG_INFO("init", "Speculative decoding enabled with max_K=" << handle->speculation_length);
+            }
+        }
+
+        // Handle corpus indexing for RAG (if provided)
         if (corpus_dir != nullptr && strlen(corpus_dir) > 0) {
             handle->corpus_dir = std::string(corpus_dir);
 
@@ -399,30 +430,26 @@ cactus_model_t cactus_init(const char* model_path, const char* corpus_dir) {
             }
         }
 
-        CACTUS_LOG_INFO("init", "Model loaded successfully: " << model_name);
+        CACTUS_LOG_INFO("init", "Model loaded successfully: " << model_name
+                       << (handle->speculation_enabled ? " (with speculation)" : ""));
 
         CactusTelemetry::getInstance().recordInit(
-            model_name, true, "Model initialized successfully"
+            model_name, true,
+            handle->speculation_enabled ?
+                "Model initialized with speculative decoding" :
+                "Model initialized successfully"
         );
 
         return handle;
     } catch (const std::exception& e) {
         last_error_message = "Exception during init: " + std::string(e.what());
         CACTUS_LOG_ERROR("init", last_error_message);
-
-        CactusTelemetry::getInstance().recordInit(
-            model_name, false, last_error_message
-        );
-
+        CactusTelemetry::getInstance().recordInit(model_name, false, last_error_message);
         return nullptr;
     } catch (...) {
         last_error_message = "Unknown exception during model initialization";
         CACTUS_LOG_ERROR("init", last_error_message);
-
-        CactusTelemetry::getInstance().recordInit(
-            model_name, false, last_error_message
-        );
-
+        CactusTelemetry::getInstance().recordInit(model_name, false, last_error_message);
         return nullptr;
     }
 }
@@ -442,6 +469,26 @@ void cactus_stop(cactus_model_t model) {
     if (!model) return;
     auto* handle = static_cast<CactusModelHandle*>(model);
     handle->should_stop = true;
+}
+
+int cactus_get_speculation_stats(
+    cactus_model_t model,
+    size_t* draft_tokens,
+    size_t* accepted_tokens,
+    float* acceptance_rate,
+    float* avg_draft_entropy,
+    int* early_stopped
+) {
+    if (!model) return -1;
+    auto* handle = static_cast<CactusModelHandle*>(model);
+
+    if (draft_tokens) *draft_tokens = handle->last_draft_tokens;
+    if (accepted_tokens) *accepted_tokens = handle->last_accepted_tokens;
+    if (acceptance_rate) *acceptance_rate = handle->last_acceptance_rate;
+    if (avg_draft_entropy) *avg_draft_entropy = handle->last_avg_draft_entropy;
+    if (early_stopped) *early_stopped = handle->last_early_stop ? 1 : 0;
+
+    return handle->speculation_enabled ? 1 : 0;
 }
 
 }

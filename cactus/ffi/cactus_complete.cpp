@@ -141,6 +141,9 @@ int cactus_complete(
         if (handle->processed_tokens.empty() || !is_prefix) {
             if (!has_images) {
                 handle->model->reset_cache();
+                if (handle->has_speculation()) {
+                    handle->draft_model->reset_cache();
+                }
             }
             tokens_to_process = current_prompt_tokens;
         } else {
@@ -182,10 +185,22 @@ int cactus_complete(
                                                          tokens_to_process.end() - 1);
                     handle->model->prefill(prefill_tokens, prefill_chunk_size);
 
+                    if (handle->has_speculation()) {
+                        handle->draft_model->prefill(prefill_tokens, prefill_chunk_size);
+                    }
+
                     std::vector<uint32_t> last_token = {tokens_to_process.back()};
                     next_token = handle->model->decode(last_token, temperature, top_p, top_k, "", &first_token_entropy);
+
+                    if (handle->has_speculation()) {
+                        handle->draft_model->decode(last_token, temperature, top_p, top_k);
+                    }
                 } else {
                     next_token = handle->model->decode(tokens_to_process, temperature, top_p, top_k, "", &first_token_entropy);
+
+                    if (handle->has_speculation()) {
+                        handle->draft_model->decode(tokens_to_process, temperature, top_p, top_k);
+                    }
                 }
             }
         }
@@ -239,40 +254,87 @@ int cactus_complete(
                 callback(new_text.c_str(), next_token, user_data);
             }
 
-            for (size_t i = 1; i < max_tokens; i++) {
+            bool use_speculation = handle->has_speculation() && !force_tools;
+
+            for (size_t i = 1; i < max_tokens; ) {
                 if (handle->should_stop) break;
 
-                float token_entropy = 0.0f;
-                next_token = handle->model->decode({next_token}, temperature, top_p, top_k, "", &token_entropy);
-                generated_tokens.push_back(next_token);
-                handle->processed_tokens.push_back(next_token);
+                if (use_speculation) {
+                    size_t remaining = max_tokens - i;
+                    size_t K = std::min(handle->speculation_length, remaining);
 
-                total_entropy_sum += token_entropy;
-                total_entropy_count++;
+                    auto spec_result = handle->model->speculative_decode(
+                        *handle->draft_model,
+                        {next_token},
+                        K,
+                        confidence_threshold,  
+                        temperature,
+                        top_p,
+                        top_k
+                    );
 
-                entropy_window.push_back(token_entropy);
-                entropy_sum += token_entropy;
-                if (entropy_window.size() > ROLLING_ENTROPY_WINDOW) {
-                    entropy_sum -= entropy_window.front();
-                    entropy_window.erase(entropy_window.begin());
-                }
+                    handle->last_draft_tokens = spec_result.draft_tokens_generated;
+                    handle->last_accepted_tokens = spec_result.tokens_accepted;
+                    handle->last_acceptance_rate = spec_result.acceptance_rate;
+                    handle->last_avg_draft_entropy = spec_result.avg_draft_entropy;
+                    handle->last_early_stop = spec_result.early_stop_entropy;
 
-                float rolling_mean_entropy = entropy_sum / entropy_window.size();
-                float rolling_confidence = 1.0f - rolling_mean_entropy;
-                if (rolling_confidence < confidence_threshold) {
-                    entropy_spike_handoff = true;
-                    break;
-                }
+                    for (uint32_t token : spec_result.tokens) {
+                        generated_tokens.push_back(token);
+                        handle->processed_tokens.push_back(token);
 
-                if (force_tools && !tools.empty()) {
-                    handle->model->update_tool_constraints(next_token);
-                }
+                        if (callback) {
+                            std::string new_text = tokenizer->decode({token});
+                            callback(new_text.c_str(), token, user_data);
+                        }
 
-                if (matches_stop_sequence(generated_tokens, stop_token_sequences)) break;
+                        if (matches_stop_sequence(generated_tokens, stop_token_sequences)) {
+                            i = max_tokens;  
+                            break;
+                        }
+                    }
 
-                if (callback) {
-                    std::string new_text = tokenizer->decode({next_token});
-                    callback(new_text.c_str(), next_token, user_data);
+                    if (!spec_result.tokens.empty()) {
+                        next_token = spec_result.tokens.back();
+                    }
+
+                    i += spec_result.tokens.size();
+
+                } else {
+                    float token_entropy = 0.0f;
+                    next_token = handle->model->decode({next_token}, temperature, top_p, top_k, "", &token_entropy);
+                    generated_tokens.push_back(next_token);
+                    handle->processed_tokens.push_back(next_token);
+
+                    total_entropy_sum += token_entropy;
+                    total_entropy_count++;
+
+                    entropy_window.push_back(token_entropy);
+                    entropy_sum += token_entropy;
+                    if (entropy_window.size() > ROLLING_ENTROPY_WINDOW) {
+                        entropy_sum -= entropy_window.front();
+                        entropy_window.erase(entropy_window.begin());
+                    }
+
+                    float rolling_mean_entropy = entropy_sum / entropy_window.size();
+                    float rolling_confidence = 1.0f - rolling_mean_entropy;
+                    if (rolling_confidence < confidence_threshold) {
+                        entropy_spike_handoff = true;
+                        break;
+                    }
+
+                    if (force_tools && !tools.empty()) {
+                        handle->model->update_tool_constraints(next_token);
+                    }
+
+                    if (matches_stop_sequence(generated_tokens, stop_token_sequences)) break;
+
+                    if (callback) {
+                        std::string new_text = tokenizer->decode({next_token});
+                        callback(new_text.c_str(), next_token, user_data);
+                    }
+
+                    i++;
                 }
             }
         }

@@ -45,7 +45,7 @@ _lib = None
 if _LIB_PATH.exists():
     _lib = ctypes.CDLL(str(_LIB_PATH))
 
-    _lib.cactus_init.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+    _lib.cactus_init.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t]
     _lib.cactus_init.restype = ctypes.c_void_p
 
     _lib.cactus_complete.argtypes = [
@@ -146,13 +146,15 @@ if _LIB_PATH.exists():
     _lib.cactus_stream_transcribe_destroy.restype = None
 
 
-def cactus_init(model_path, corpus_dir=None):
+def cactus_init(model_path, corpus_dir=None, draft_model_path=None, speculation_length=0):
     """
     Initialize a model and return its handle.
 
     Args:
         model_path: Path to model weights directory
         corpus_dir: Optional path to RAG corpus directory for document Q&A
+        draft_model_path: Optional path to draft model for speculative decoding
+        speculation_length: Number of draft tokens to generate (0 uses default of 5)
 
     Returns:
         Model handle (opaque pointer) or None if initialization failed.
@@ -160,7 +162,9 @@ def cactus_init(model_path, corpus_dir=None):
     """
     return _lib.cactus_init(
         model_path.encode() if isinstance(model_path, str) else model_path,
-        corpus_dir.encode() if corpus_dir else None
+        corpus_dir.encode() if corpus_dir else None,
+        draft_model_path.encode() if draft_model_path else None,
+        speculation_length
     )
 
 
