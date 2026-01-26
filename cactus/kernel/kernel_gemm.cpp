@@ -4,6 +4,55 @@
 #include <cstring>
 #include <algorithm>
 
+// TEMPORARY: Force fallback path for testing on DOTPROD devices
+// #undef __ARM_FEATURE_DOTPROD
+
+#if defined(__ARM_FEATURE_DOTPROD)
+    #define CACTUS_DOTQ_LANE(acc, b, a, lane) vdotq_laneq_s32(acc, b, a, lane)
+#else
+    static inline int32x4_t cactus_dotq_with_pattern(int32x4_t acc, int8x16_t b, int8x8_t a_pattern) {
+        int8x8_t b_lo = vget_low_s8(b);
+        int8x8_t b_hi = vget_high_s8(b);
+
+        int16x8_t prod_lo = vmull_s8(b_lo, a_pattern);
+        int16x8_t prod_hi = vmull_s8(b_hi, a_pattern);
+
+        int32x4_t sum_lo = vpaddlq_s16(prod_lo);
+        int32x4_t sum_hi = vpaddlq_s16(prod_hi);
+
+        int32x2_t final_lo = vpadd_s32(vget_low_s32(sum_lo), vget_high_s32(sum_lo));
+        int32x2_t final_hi = vpadd_s32(vget_low_s32(sum_hi), vget_high_s32(sum_hi));
+
+        return vaddq_s32(acc, vcombine_s32(final_lo, final_hi));
+    }
+
+    static inline int32x4_t cactus_dotq_lane0(int32x4_t acc, int8x16_t b, int8x16_t a) {
+        int8x8_t a_lo = vget_low_s8(a);
+        int8x8_t a_pattern = vreinterpret_s8_s32(vdup_lane_s32(vreinterpret_s32_s8(a_lo), 0));
+        return cactus_dotq_with_pattern(acc, b, a_pattern);
+    }
+
+    static inline int32x4_t cactus_dotq_lane1(int32x4_t acc, int8x16_t b, int8x16_t a) {
+        int8x8_t a_lo = vget_low_s8(a);
+        int8x8_t a_pattern = vreinterpret_s8_s32(vdup_lane_s32(vreinterpret_s32_s8(a_lo), 1));
+        return cactus_dotq_with_pattern(acc, b, a_pattern);
+    }
+
+    static inline int32x4_t cactus_dotq_lane2(int32x4_t acc, int8x16_t b, int8x16_t a) {
+        int8x8_t a_hi = vget_high_s8(a);
+        int8x8_t a_pattern = vreinterpret_s8_s32(vdup_lane_s32(vreinterpret_s32_s8(a_hi), 0));
+        return cactus_dotq_with_pattern(acc, b, a_pattern);
+    }
+
+    static inline int32x4_t cactus_dotq_lane3(int32x4_t acc, int8x16_t b, int8x16_t a) {
+        int8x8_t a_hi = vget_high_s8(a);
+        int8x8_t a_pattern = vreinterpret_s8_s32(vdup_lane_s32(vreinterpret_s32_s8(a_hi), 1));
+        return cactus_dotq_with_pattern(acc, b, a_pattern);
+    }
+
+    #define CACTUS_DOTQ_LANE(acc, b, a, lane) cactus_dotq_lane##lane(acc, b, a)
+#endif
+
 static inline __fp16 hsum_f16x8(float16x8_t v) {
     float16x4_t lo = vget_low_f16(v);
     float16x4_t hi = vget_high_f16(v);
@@ -168,10 +217,10 @@ void cactus_gemv_int8(
                     int8x16_t b2 = vld1q_s8(b_base0 + 32);
                     int8x16_t b3 = vld1q_s8(b_base0 + 48);
 
-                    acc0 = vdotq_laneq_s32(acc0, b0, a_vec, 0);
-                    acc0 = vdotq_laneq_s32(acc0, b1, a_vec, 1);
-                    acc0 = vdotq_laneq_s32(acc0, b2, a_vec, 2);
-                    acc0 = vdotq_laneq_s32(acc0, b3, a_vec, 3);
+                    acc0 = CACTUS_DOTQ_LANE(acc0, b0, a_vec, 0);
+                    acc0 = CACTUS_DOTQ_LANE(acc0, b1, a_vec, 1);
+                    acc0 = CACTUS_DOTQ_LANE(acc0, b2, a_vec, 2);
+                    acc0 = CACTUS_DOTQ_LANE(acc0, b3, a_vec, 3);
 
                     a_vec = vld1q_s8(a_ptr0 + 16);
                     b0 = vld1q_s8(b_base0 + 64);
@@ -179,10 +228,10 @@ void cactus_gemv_int8(
                     b2 = vld1q_s8(b_base0 + 96);
                     b3 = vld1q_s8(b_base0 + 112);
 
-                    acc0 = vdotq_laneq_s32(acc0, b0, a_vec, 0);
-                    acc0 = vdotq_laneq_s32(acc0, b1, a_vec, 1);
-                    acc0 = vdotq_laneq_s32(acc0, b2, a_vec, 2);
-                    acc0 = vdotq_laneq_s32(acc0, b3, a_vec, 3);
+                    acc0 = CACTUS_DOTQ_LANE(acc0, b0, a_vec, 0);
+                    acc0 = CACTUS_DOTQ_LANE(acc0, b1, a_vec, 1);
+                    acc0 = CACTUS_DOTQ_LANE(acc0, b2, a_vec, 2);
+                    acc0 = CACTUS_DOTQ_LANE(acc0, b3, a_vec, 3);
                 }
 
                 {
@@ -192,10 +241,10 @@ void cactus_gemv_int8(
                     int8x16_t b2 = vld1q_s8(b_base1 + 32);
                     int8x16_t b3 = vld1q_s8(b_base1 + 48);
 
-                    acc1 = vdotq_laneq_s32(acc1, b0, a_vec, 0);
-                    acc1 = vdotq_laneq_s32(acc1, b1, a_vec, 1);
-                    acc1 = vdotq_laneq_s32(acc1, b2, a_vec, 2);
-                    acc1 = vdotq_laneq_s32(acc1, b3, a_vec, 3);
+                    acc1 = CACTUS_DOTQ_LANE(acc1, b0, a_vec, 0);
+                    acc1 = CACTUS_DOTQ_LANE(acc1, b1, a_vec, 1);
+                    acc1 = CACTUS_DOTQ_LANE(acc1, b2, a_vec, 2);
+                    acc1 = CACTUS_DOTQ_LANE(acc1, b3, a_vec, 3);
 
                     a_vec = vld1q_s8(a_ptr1 + 16);
                     b0 = vld1q_s8(b_base1 + 64);
@@ -203,10 +252,10 @@ void cactus_gemv_int8(
                     b2 = vld1q_s8(b_base1 + 96);
                     b3 = vld1q_s8(b_base1 + 112);
 
-                    acc1 = vdotq_laneq_s32(acc1, b0, a_vec, 0);
-                    acc1 = vdotq_laneq_s32(acc1, b1, a_vec, 1);
-                    acc1 = vdotq_laneq_s32(acc1, b2, a_vec, 2);
-                    acc1 = vdotq_laneq_s32(acc1, b3, a_vec, 3);
+                    acc1 = CACTUS_DOTQ_LANE(acc1, b0, a_vec, 0);
+                    acc1 = CACTUS_DOTQ_LANE(acc1, b1, a_vec, 1);
+                    acc1 = CACTUS_DOTQ_LANE(acc1, b2, a_vec, 2);
+                    acc1 = CACTUS_DOTQ_LANE(acc1, b3, a_vec, 3);
                 }
 
                 const __fp16* scale_ptr0 = B_scales + (n_block * num_groups + g) * 4;
@@ -234,10 +283,10 @@ void cactus_gemv_int8(
                 int8x16_t b2 = vld1q_s8(b_base + 32);
                 int8x16_t b3 = vld1q_s8(b_base + 48);
 
-                acc = vdotq_laneq_s32(acc, b0, a_vec, 0);
-                acc = vdotq_laneq_s32(acc, b1, a_vec, 1);
-                acc = vdotq_laneq_s32(acc, b2, a_vec, 2);
-                acc = vdotq_laneq_s32(acc, b3, a_vec, 3);
+                acc = CACTUS_DOTQ_LANE(acc, b0, a_vec, 0);
+                acc = CACTUS_DOTQ_LANE(acc, b1, a_vec, 1);
+                acc = CACTUS_DOTQ_LANE(acc, b2, a_vec, 2);
+                acc = CACTUS_DOTQ_LANE(acc, b3, a_vec, 3);
 
                 a_vec = vld1q_s8(a_ptr + 16);
                 b0 = vld1q_s8(b_base + 64);
@@ -245,10 +294,10 @@ void cactus_gemv_int8(
                 b2 = vld1q_s8(b_base + 96);
                 b3 = vld1q_s8(b_base + 112);
 
-                acc = vdotq_laneq_s32(acc, b0, a_vec, 0);
-                acc = vdotq_laneq_s32(acc, b1, a_vec, 1);
-                acc = vdotq_laneq_s32(acc, b2, a_vec, 2);
-                acc = vdotq_laneq_s32(acc, b3, a_vec, 3);
+                acc = CACTUS_DOTQ_LANE(acc, b0, a_vec, 0);
+                acc = CACTUS_DOTQ_LANE(acc, b1, a_vec, 1);
+                acc = CACTUS_DOTQ_LANE(acc, b2, a_vec, 2);
+                acc = CACTUS_DOTQ_LANE(acc, b3, a_vec, 3);
 
                 const __fp16* scale_ptr = B_scales + (n_block * num_groups + g) * 4;
                 float16x4_t scales_f16 = vld1_f16(scale_ptr);
@@ -346,16 +395,16 @@ void cactus_gemm_int8(
                         int32x4_t acc = vdupq_n_s32(0);
 
                         int8x16_t a_vec = vld1q_s8(a_ptr);
-                        acc = vdotq_laneq_s32(acc, b00, a_vec, 0);
-                        acc = vdotq_laneq_s32(acc, b01, a_vec, 1);
-                        acc = vdotq_laneq_s32(acc, b02, a_vec, 2);
-                        acc = vdotq_laneq_s32(acc, b03, a_vec, 3);
+                        acc = CACTUS_DOTQ_LANE(acc, b00, a_vec, 0);
+                        acc = CACTUS_DOTQ_LANE(acc, b01, a_vec, 1);
+                        acc = CACTUS_DOTQ_LANE(acc, b02, a_vec, 2);
+                        acc = CACTUS_DOTQ_LANE(acc, b03, a_vec, 3);
 
                         a_vec = vld1q_s8(a_ptr + 16);
-                        acc = vdotq_laneq_s32(acc, b10, a_vec, 0);
-                        acc = vdotq_laneq_s32(acc, b11, a_vec, 1);
-                        acc = vdotq_laneq_s32(acc, b12, a_vec, 2);
-                        acc = vdotq_laneq_s32(acc, b13, a_vec, 3);
+                        acc = CACTUS_DOTQ_LANE(acc, b10, a_vec, 0);
+                        acc = CACTUS_DOTQ_LANE(acc, b11, a_vec, 1);
+                        acc = CACTUS_DOTQ_LANE(acc, b12, a_vec, 2);
+                        acc = CACTUS_DOTQ_LANE(acc, b13, a_vec, 3);
 
                         running_sum[mi] = vmlaq_f32(running_sum[mi], vcvtq_f32_s32(acc), scales);
                     }
@@ -396,4 +445,3 @@ void cactus_matmul_int8(
         cactus_gemm_int8(A, A_scales, B, B_scales, C, M, K, N, group_size);
     }
 }
-

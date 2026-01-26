@@ -22,7 +22,7 @@ std::vector<BenchResult> benchmark_gemm_threading() {
     const std::vector<size_t> K_values = {256, 1024};
     const std::vector<size_t> N_values = {1024};
     const int iterations = 5;
-    const size_t group_size = 128;
+    const size_t group_size = 32;
 
     auto& pool = CactusThreading::get_thread_pool();
     size_t max_threads = pool.num_workers();
