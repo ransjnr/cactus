@@ -439,18 +439,32 @@ namespace CactusThreading {
     struct GemmThreading {
         #if defined(__ANDROID__)
         static size_t get_num_threads(size_t M, size_t pool_size) {
-            if (M <= 1) return 1; 
-            return pool_size; 
+            if (M <= 1) return 1;
+            return pool_size;
+        }
+        static size_t get_gemv_threads(size_t /*N_blocks*/, size_t /*pool_size*/) {
+            return 1; 
         }
         #elif defined(__APPLE__) && TARGET_OS_IPHONE
+        static constexpr size_t GEMV_MIN_N_BLOCKS = 512; 
         static size_t get_num_threads(size_t M, size_t pool_size) {
-            if (M <= 1) return std::min(pool_size, static_cast<size_t>(2)); 
-            return pool_size; 
+            if (M <= 1) return std::min(pool_size, static_cast<size_t>(2));
+            return pool_size;
         }
-        #else // Mac
+        static size_t get_gemv_threads(size_t N_blocks, size_t pool_size) {
+            if (N_blocks < GEMV_MIN_N_BLOCKS) return 1;
+            return std::min(pool_size, static_cast<size_t>(2));
+        }
+        #else 
+        static constexpr size_t GEMV_MIN_N_BLOCKS = 256;  
         static size_t get_num_threads(size_t M, size_t pool_size) {
             if (M <= 1) return std::min(pool_size, static_cast<size_t>(4));
-            return pool_size; 
+            return pool_size;
+        }
+        static size_t get_gemv_threads(size_t N_blocks, size_t pool_size) {
+            if (N_blocks < GEMV_MIN_N_BLOCKS) return 1;
+            if (N_blocks < 512) return std::min(pool_size, static_cast<size_t>(2));
+            return std::min(pool_size, static_cast<size_t>(4));
         }
         #endif
     };

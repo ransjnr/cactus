@@ -3,7 +3,6 @@
 #include <arm_neon.h>
 #include <cstring>
 #include <algorithm>
-#include <cmath>
 
 static inline __fp16 hsum_f16x8(float16x8_t v) {
     float16x4_t lo = vget_low_f16(v);
@@ -126,11 +125,153 @@ void cactus_matmul_f16(
 }
 
 
-void cactus_matmul_int8(
-    const int8_t* A, 
-    const float* A_scales, 
-    const int8_t* B, 
-    const __fp16* B_scales, 
+void cactus_gemv_int8(
+    const int8_t* A,
+    const float A_scale,
+    const int8_t* B,
+    const __fp16* B_scales,
+    __fp16* C,
+    size_t K, size_t N,
+    size_t group_size
+) {
+    if (K == 0 || N == 0) return;
+
+    const size_t num_groups = K / group_size;
+    const size_t N_blocks = (N + 3) / 4;
+
+    auto process_blocks = [=](size_t block_start, size_t block_end) {
+        for (size_t n_block = block_start; n_block < block_end; ++n_block) {
+            const size_t n_start = n_block * 4;
+            const size_t actual_n = std::min(size_t(4), N - n_start);
+
+            float32x4_t running_sum = vdupq_n_f32(0.0f);
+
+            size_t g = 0;
+            for (; g + 1 < num_groups; g += 2) {
+                const size_t k_base0 = g * group_size;
+                const size_t k_base1 = (g + 1) * group_size;
+
+                const int8_t* a_ptr0 = A + k_base0;
+                const int8_t* a_ptr1 = A + k_base1;
+                const int8_t* b_base0 = B + (n_block * K + k_base0) * 4;
+                const int8_t* b_base1 = B + (n_block * K + k_base1) * 4;
+
+                __builtin_prefetch(b_base0 + group_size * 8, 0, 3);
+
+                int32x4_t acc0[4] = {vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0)};
+                int32x4_t acc1[4] = {vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0)};
+
+                {
+                    int8x16_t a_vec0 = vld1q_s8(a_ptr0);
+                    int8x16_t a_vec1 = vld1q_s8(a_ptr0 + 16);
+                    int8x16x4_t b_cols0 = vld4q_s8(b_base0);
+                    int8x16x4_t b_cols1 = vld4q_s8(b_base0 + 64);
+
+                    acc0[0] = accum_dot(acc0[0], a_vec0, b_cols0.val[0]);
+                    acc0[1] = accum_dot(acc0[1], a_vec0, b_cols0.val[1]);
+                    acc0[2] = accum_dot(acc0[2], a_vec0, b_cols0.val[2]);
+                    acc0[3] = accum_dot(acc0[3], a_vec0, b_cols0.val[3]);
+
+                    acc0[0] = accum_dot(acc0[0], a_vec1, b_cols1.val[0]);
+                    acc0[1] = accum_dot(acc0[1], a_vec1, b_cols1.val[1]);
+                    acc0[2] = accum_dot(acc0[2], a_vec1, b_cols1.val[2]);
+                    acc0[3] = accum_dot(acc0[3], a_vec1, b_cols1.val[3]);
+                }
+
+                {
+                    int8x16_t a_vec0 = vld1q_s8(a_ptr1);
+                    int8x16_t a_vec1 = vld1q_s8(a_ptr1 + 16);
+                    int8x16x4_t b_cols0 = vld4q_s8(b_base1);
+                    int8x16x4_t b_cols1 = vld4q_s8(b_base1 + 64);
+
+                    acc1[0] = accum_dot(acc1[0], a_vec0, b_cols0.val[0]);
+                    acc1[1] = accum_dot(acc1[1], a_vec0, b_cols0.val[1]);
+                    acc1[2] = accum_dot(acc1[2], a_vec0, b_cols0.val[2]);
+                    acc1[3] = accum_dot(acc1[3], a_vec0, b_cols0.val[3]);
+
+                    acc1[0] = accum_dot(acc1[0], a_vec1, b_cols1.val[0]);
+                    acc1[1] = accum_dot(acc1[1], a_vec1, b_cols1.val[1]);
+                    acc1[2] = accum_dot(acc1[2], a_vec1, b_cols1.val[2]);
+                    acc1[3] = accum_dot(acc1[3], a_vec1, b_cols1.val[3]);
+                }
+
+                int32x4_t sums0 = {vaddvq_s32(acc0[0]), vaddvq_s32(acc0[1]), vaddvq_s32(acc0[2]), vaddvq_s32(acc0[3])};
+                int32x4_t sums1 = {vaddvq_s32(acc1[0]), vaddvq_s32(acc1[1]), vaddvq_s32(acc1[2]), vaddvq_s32(acc1[3])};
+
+                const __fp16* scale_ptr0 = B_scales + (n_block * num_groups + g) * 4;
+                const __fp16* scale_ptr1 = B_scales + (n_block * num_groups + g + 1) * 4;
+
+                float16x4_t scales0_f16 = vld1_f16(scale_ptr0);
+                float16x4_t scales1_f16 = vld1_f16(scale_ptr1);
+                float32x4_t scales0 = vcvt_f32_f16(scales0_f16);
+                float32x4_t scales1 = vcvt_f32_f16(scales1_f16);
+
+                running_sum = vmlaq_f32(running_sum, vcvtq_f32_s32(sums0), scales0);
+                running_sum = vmlaq_f32(running_sum, vcvtq_f32_s32(sums1), scales1);
+            }
+
+            for (; g < num_groups; g++) {
+                const size_t k_base = g * group_size;
+                const int8_t* a_ptr = A + k_base;
+                const int8_t* b_block_base = B + (n_block * K + k_base) * 4;
+
+                int32x4_t acc[4] = {vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0)};
+
+                int8x16_t a_vec0 = vld1q_s8(a_ptr);
+                int8x16_t a_vec1 = vld1q_s8(a_ptr + 16);
+                int8x16x4_t b_cols0 = vld4q_s8(b_block_base);
+                int8x16x4_t b_cols1 = vld4q_s8(b_block_base + 64);
+
+                acc[0] = accum_dot(acc[0], a_vec0, b_cols0.val[0]);
+                acc[1] = accum_dot(acc[1], a_vec0, b_cols0.val[1]);
+                acc[2] = accum_dot(acc[2], a_vec0, b_cols0.val[2]);
+                acc[3] = accum_dot(acc[3], a_vec0, b_cols0.val[3]);
+
+                acc[0] = accum_dot(acc[0], a_vec1, b_cols1.val[0]);
+                acc[1] = accum_dot(acc[1], a_vec1, b_cols1.val[1]);
+                acc[2] = accum_dot(acc[2], a_vec1, b_cols1.val[2]);
+                acc[3] = accum_dot(acc[3], a_vec1, b_cols1.val[3]);
+
+                int32x4_t sums = {vaddvq_s32(acc[0]), vaddvq_s32(acc[1]), vaddvq_s32(acc[2]), vaddvq_s32(acc[3])};
+
+                const __fp16* scale_ptr = B_scales + (n_block * num_groups + g) * 4;
+                float16x4_t scales_f16 = vld1_f16(scale_ptr);
+                float32x4_t scales = vcvt_f32_f16(scales_f16);
+
+                running_sum = vmlaq_f32(running_sum, vcvtq_f32_s32(sums), scales);
+            }
+
+            float32x4_t result = vmulq_n_f32(running_sum, A_scale);
+            float16x4_t result_f16 = vcvt_f16_f32(result);
+
+            if (actual_n == 4) {
+                vst1_f16(C + n_start, result_f16);
+            } else {
+                for (size_t ni = 0; ni < actual_n; ni++) {
+                    C[n_start + ni] = vget_lane_f16(result_f16, 0);
+                    result_f16 = vext_f16(result_f16, result_f16, 1);
+                }
+            }
+        }
+    };
+
+    auto& pool = CactusThreading::get_thread_pool();
+    size_t num_threads = CactusThreading::GemmThreading::get_gemv_threads(N_blocks, pool.num_workers());
+    num_threads = std::min(num_threads, N_blocks);
+
+    if (num_threads <= 1) {
+        process_blocks(0, N_blocks);
+    } else {
+        pool.enqueue_n_threads(N_blocks, num_threads, process_blocks);
+        pool.wait_all();
+    }
+}
+
+void cactus_gemm_int8(
+    const int8_t* A,
+    const float* A_scales,
+    const int8_t* B,
+    const __fp16* B_scales,
     __fp16* C,
     size_t M, size_t K, size_t N,
     size_t group_size
@@ -138,10 +279,10 @@ void cactus_matmul_int8(
     if (M == 0 || K == 0 || N == 0) return;
 
     constexpr size_t TILE_M = 4;
-    constexpr size_t TILE_N = 4;  
+    constexpr size_t TILE_N = 4;
 
     const size_t num_groups = K / group_size;
-    const size_t N_blocks = (N + 3) / 4;  
+    const size_t N_blocks = (N + 3) / 4;
     const size_t num_row_tiles = (M + TILE_M - 1) / TILE_M;
     const size_t total_tiles = num_row_tiles * N_blocks;
 
@@ -157,154 +298,80 @@ void cactus_matmul_int8(
                 const size_t actual_m = m_end - m_start;
                 const size_t actual_n = n_end - n_start;
 
-                float running_sum[TILE_M][TILE_N] = {{0.0f}};
-                __builtin_prefetch(&B_scales[n_block * num_groups * 4], 0, 3);
-
+                float32x4_t running_sum[TILE_M] = {
+                    vdupq_n_f32(0.0f), vdupq_n_f32(0.0f),
+                    vdupq_n_f32(0.0f), vdupq_n_f32(0.0f)
+                };
 
                 for (size_t g = 0; g < num_groups; g++) {
                     const size_t k_base = g * group_size;
-
-                    int32_t group_acc[TILE_M][TILE_N] = {{0}};
-
                     const int8_t* b_block_base = B + (n_block * K + k_base) * 4;
 
-                    __builtin_prefetch(b_block_base, 0, 3);
-                    __builtin_prefetch(b_block_base + 64, 0, 3);
+                    __builtin_prefetch(b_block_base + group_size * 4, 0, 3);
 
-                    if (cactus_has_i8mm() && actual_m >= 2) {
-                        size_t mi = 0;
-                        for (; mi + 1 < actual_m; mi += 2) {
-                            const int8_t* a_base0 = A + (m_start + mi) * K + k_base;
-                            const int8_t* a_base1 = A + (m_start + mi + 1) * K + k_base;
+                    int8x16x4_t b_cols0 = vld4q_s8(b_block_base);
+                    int8x16x4_t b_cols1 = vld4q_s8(b_block_base + 64);
+                    for (size_t mi = 0; mi < actual_m; mi++) {
+                        const int8_t* a_ptr = A + (m_start + mi) * K + k_base;
 
-                            int32x4_t acc01 = vdupq_n_s32(0);
-                            int32x4_t acc23 = vdupq_n_s32(0);
+                        int8x16_t a_vec0 = vld1q_s8(a_ptr);
+                        int8x16_t a_vec1 = vld1q_s8(a_ptr + 16);
 
-                            for (size_t k_offset = 0; k_offset < group_size; k_offset += 16) {
-                                int8x16x4_t b_cols = vld4q_s8(b_block_base + k_offset * 4);
+                        int32x4_t acc[4] = {vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0)};
 
-                                int8x8_t a0_lo = vld1_s8(a_base0 + k_offset);
-                                int8x8_t a1_lo = vld1_s8(a_base1 + k_offset);
+                        acc[0] = accum_dot(acc[0], a_vec0, b_cols0.val[0]);
+                        acc[1] = accum_dot(acc[1], a_vec0, b_cols0.val[1]);
+                        acc[2] = accum_dot(acc[2], a_vec0, b_cols0.val[2]);
+                        acc[3] = accum_dot(acc[3], a_vec0, b_cols0.val[3]);
 
-                                int8x8_t a0_hi = vld1_s8(a_base0 + k_offset + 8);
-                                int8x8_t a1_hi = vld1_s8(a_base1 + k_offset + 8);
+                        acc[0] = accum_dot(acc[0], a_vec1, b_cols1.val[0]);
+                        acc[1] = accum_dot(acc[1], a_vec1, b_cols1.val[1]);
+                        acc[2] = accum_dot(acc[2], a_vec1, b_cols1.val[2]);
+                        acc[3] = accum_dot(acc[3], a_vec1, b_cols1.val[3]);
 
-                                int8x16_t a_combined_lo = vcombine_s8(a0_lo, a1_lo);
-                                int8x16_t a_combined_hi = vcombine_s8(a0_hi, a1_hi);
+                        int32x4_t sums = {vaddvq_s32(acc[0]), vaddvq_s32(acc[1]), vaddvq_s32(acc[2]), vaddvq_s32(acc[3])};
 
-                                int8x16_t b01_lo = vcombine_s8(vget_low_s8(b_cols.val[0]), vget_low_s8(b_cols.val[1]));
-                                int8x16_t b01_hi = vcombine_s8(vget_high_s8(b_cols.val[0]), vget_high_s8(b_cols.val[1]));
+                        const __fp16* scale_ptr = B_scales + (n_block * num_groups + g) * 4;
+                        float16x4_t scales_f16 = vld1_f16(scale_ptr);
+                        float32x4_t scales = vcvt_f32_f16(scales_f16);
 
-                                int8x16_t b23_lo = vcombine_s8(vget_low_s8(b_cols.val[2]), vget_low_s8(b_cols.val[3]));
-                                int8x16_t b23_hi = vcombine_s8(vget_high_s8(b_cols.val[2]), vget_high_s8(b_cols.val[3]));
-
-                                acc01 = accum_matmul(acc01, a_combined_lo, b01_lo);
-                                acc01 = accum_matmul(acc01, a_combined_hi, b01_hi);
-
-                                acc23 = accum_matmul(acc23, a_combined_lo, b23_lo);
-                                acc23 = accum_matmul(acc23, a_combined_hi, b23_hi);
-                            }
-
-                            group_acc[mi][0] += vgetq_lane_s32(acc01, 0);
-                            group_acc[mi][1] += vgetq_lane_s32(acc01, 1);
-
-                            group_acc[mi + 1][0] += vgetq_lane_s32(acc01, 2);
-                            group_acc[mi + 1][1] += vgetq_lane_s32(acc01, 3);
-
-                            if (actual_n > 2) {
-                                group_acc[mi][2] += vgetq_lane_s32(acc23, 0);
-                                group_acc[mi][3] += vgetq_lane_s32(acc23, 1);
-
-                                group_acc[mi + 1][2] += vgetq_lane_s32(acc23, 2);
-                                group_acc[mi + 1][3] += vgetq_lane_s32(acc23, 3);
-                            }
-                        }
-
-                        for (; mi < actual_m; mi++) {
-                            const int8_t* a_ptr = A + (m_start + mi) * K + k_base;
-                            int32x4_t acc[TILE_N] = {vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0)};
-
-                            for (size_t k_offset = 0; k_offset < group_size; k_offset += 16) {
-                                int8x16_t a_vec = vld1q_s8(a_ptr + k_offset);
-                                int8x16x4_t b_cols = vld4q_s8(b_block_base + k_offset * 4);
-
-                                acc[0] = accum_dot(acc[0], a_vec, b_cols.val[0]);
-                                acc[1] = accum_dot(acc[1], a_vec, b_cols.val[1]);
-                                acc[2] = accum_dot(acc[2], a_vec, b_cols.val[2]);
-                                acc[3] = accum_dot(acc[3], a_vec, b_cols.val[3]);
-                            }
-
-                            for (size_t ni = 0; ni < actual_n; ni++) {
-                                group_acc[mi][ni] += vaddvq_s32(acc[ni]);
-                            }
-                        }
-                    } else {
-                        size_t mi = 0;
-                        for (; mi + 1 < actual_m; mi += 2) {
-                            const int8_t* a_ptr0 = A + (m_start + mi) * K + k_base;
-                            const int8_t* a_ptr1 = A + (m_start + mi + 1) * K + k_base;
-
-                            int32x4_t acc0[TILE_N] = {vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0)};
-                            int32x4_t acc1[TILE_N] = {vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0)};
-
-                            for (size_t k_offset = 0; k_offset < group_size; k_offset += 16) {
-                                int8x16x4_t b_cols = vld4q_s8(b_block_base + k_offset * 4);
-                                int8x16_t a_vec0 = vld1q_s8(a_ptr0 + k_offset);
-                                int8x16_t a_vec1 = vld1q_s8(a_ptr1 + k_offset);
-
-                                acc0[0] = accum_dot(acc0[0], a_vec0, b_cols.val[0]);
-                                acc0[1] = accum_dot(acc0[1], a_vec0, b_cols.val[1]);
-                                acc0[2] = accum_dot(acc0[2], a_vec0, b_cols.val[2]);
-                                acc0[3] = accum_dot(acc0[3], a_vec0, b_cols.val[3]);
-
-                                acc1[0] = accum_dot(acc1[0], a_vec1, b_cols.val[0]);
-                                acc1[1] = accum_dot(acc1[1], a_vec1, b_cols.val[1]);
-                                acc1[2] = accum_dot(acc1[2], a_vec1, b_cols.val[2]);
-                                acc1[3] = accum_dot(acc1[3], a_vec1, b_cols.val[3]);
-                            }
-
-                            for (size_t ni = 0; ni < actual_n; ni++) {
-                                group_acc[mi][ni] += vaddvq_s32(acc0[ni]);
-                                group_acc[mi + 1][ni] += vaddvq_s32(acc1[ni]);
-                            }
-                        }
-
-                        for (; mi < actual_m; mi++) {
-                            const int8_t* a_ptr = A + (m_start + mi) * K + k_base;
-                            int32x4_t acc[TILE_N] = {vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0)};
-
-                            for (size_t k_offset = 0; k_offset < group_size; k_offset += 16) {
-                                int8x16x4_t b_cols = vld4q_s8(b_block_base + k_offset * 4);
-                                int8x16_t a_vec = vld1q_s8(a_ptr + k_offset);
-
-                                acc[0] = accum_dot(acc[0], a_vec, b_cols.val[0]);
-                                acc[1] = accum_dot(acc[1], a_vec, b_cols.val[1]);
-                                acc[2] = accum_dot(acc[2], a_vec, b_cols.val[2]);
-                                acc[3] = accum_dot(acc[3], a_vec, b_cols.val[3]);
-                            }
-
-                            for (size_t ni = 0; ni < actual_n; ni++) {
-                                group_acc[mi][ni] += vaddvq_s32(acc[ni]);
-                            }
-                        }
-                    }
-
-                    const __fp16* scale_ptr = B_scales + (n_block * num_groups + g) * 4;
-                    for (size_t ni = 0; ni < actual_n; ni++) {
-                        const float b_scale = (float)scale_ptr[ni];
-                        for (size_t mi = 0; mi < actual_m; mi++) {
-                            running_sum[mi][ni] += (float)group_acc[mi][ni] * b_scale;
-                        }
+                        running_sum[mi] = vmlaq_f32(running_sum[mi], vcvtq_f32_s32(sums), scales);
                     }
                 }
 
                 for (size_t mi = 0; mi < actual_m; mi++) {
                     const float a_scale = A_scales[m_start + mi];
-                    for (size_t ni = 0; ni < actual_n; ni++) {
-                        C[(m_start + mi) * N + (n_start + ni)] = (__fp16)(running_sum[mi][ni] * a_scale);
+                    float32x4_t result = vmulq_n_f32(running_sum[mi], a_scale);
+                    float16x4_t result_f16 = vcvt_f16_f32(result);
+
+                    if (actual_n == 4) {
+                        vst1_f16(C + (m_start + mi) * N + n_start, result_f16);
+                    } else {
+                        for (size_t ni = 0; ni < actual_n; ni++) {
+                            C[(m_start + mi) * N + n_start + ni] = vget_lane_f16(result_f16, 0);
+                            result_f16 = vext_f16(result_f16, result_f16, 1);
+                        }
                     }
                 }
             }
         });
+}
+
+void cactus_matmul_int8(
+    const int8_t* A,
+    const float* A_scales,
+    const int8_t* B,
+    const __fp16* B_scales,
+    __fp16* C,
+    size_t M, size_t K, size_t N,
+    size_t group_size
+) {
+    if (M == 0 || K == 0 || N == 0) return;
+
+    if (M == 1) {
+        cactus_gemv_int8(A, A_scales[0], B, B_scales, C, K, N, group_size);
+    } else {
+        cactus_gemm_int8(A, A_scales, B, B_scales, C, M, K, N, group_size);
+    }
 }
 
