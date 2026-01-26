@@ -185,7 +185,8 @@ git clone https://github.com/cactus-compute/cactus && cd cactus && source ./setu
 # Maintaining Organisations
 1. [Cactus Compute, Inc](https://cactuscompute.com/) 
 2. [UCLA's BruinAI](https://bruinai.org/) 
-3. [UC Irvine's AI@UCI](https://aiclub.ics.uci.edu/)
+3. [Yale's AI Society](https://www.yale-ai.org/team)
+4. [UC Irvine's AI@UCI](https://aiclub.ics.uci.edu/)
 
 # Join The Community
 - [Reddit Channel](https://www.reddit.com/r/cactuscompute/)

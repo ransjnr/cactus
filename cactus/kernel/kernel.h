@@ -15,7 +15,7 @@ enum class ScalarOpType {
     SIN
 };
 
-constexpr size_t KV_QUANT_GROUP_SIZE = 128;
+constexpr size_t KV_QUANT_GROUP_SIZE = 64;
 
 void cactus_add_f16(const __fp16* a, const __fp16* b, __fp16* output, size_t num_elements);
 void cactus_add_f16_clipped(const __fp16* a, const __fp16* b, __fp16* output, size_t num_elements);
@@ -40,10 +40,6 @@ void cactus_scalar_op_f16(const __fp16* input, __fp16* output, size_t num_elemen
 
 void cactus_matmul_int8(const int8_t* A, const float* A_scales,
                         const int8_t* B, const __fp16* B_scales,
-                        __fp16* C, size_t M, size_t K, size_t N, size_t group_size);
-
-void cactus_matmul_int4(const int8_t* A, const float* A_scales,
-                        const uint8_t* B_packed, const __fp16* B_scales,
                         __fp16* C, size_t M, size_t K, size_t N, size_t group_size);
 
 void cactus_matmul_f16(const __fp16* a, const __fp16* b_transposed, __fp16* c,
