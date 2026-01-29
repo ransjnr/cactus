@@ -438,6 +438,7 @@ public:
     size_t mmap_weights(const std::string& filename);
     size_t load_weights(const std::string& filename);
     void set_grouped_scales(size_t node_id, size_t group_size, size_t num_groups, void* scales_ptr);
+    void set_interleaved(size_t node_id, bool interleaved, size_t original_N);
 
     void release_weight_pages(size_t node_id);
     void prefetch_weight_pages(size_t node_id);

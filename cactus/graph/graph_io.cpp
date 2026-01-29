@@ -121,6 +121,13 @@ void CactusGraph::set_grouped_scales(size_t node_id, size_t group_size, size_t n
     }
 }
 
+void CactusGraph::set_interleaved(size_t node_id, bool interleaved, size_t original_N) {
+    auto it = node_index_map_.find(node_id);
+    if (it != node_index_map_.end()) {
+        nodes_[it->second]->output_buffer.set_interleaved(interleaved, original_N);
+    }
+}
+
 size_t CactusGraph::embedding(const std::string& filename, size_t indices) {
     auto mapped_file = std::make_unique<GraphFile::MappedFile>(filename);
 
