@@ -243,10 +243,13 @@ int cactus_stream_transcribe_process(
             return 0;
         }
 
+        bool is_moonshine = handle->model_handle->model->get_config().model_type == cactus::engine::Config::ModelType::MOONSHINE;
+        const std::string prompt = is_moonshine ? "" : "<|startoftranscript|><|en|><|transcribe|><|notimestamps|>";
+
         const int result = cactus_transcribe(
             handle->model_handle,
             nullptr,
-            "<|startoftranscript|><|en|><|transcribe|><|notimestamps|>",
+            prompt.c_str(),
             handle->transcribe_response_buffer,
             sizeof(handle->transcribe_response_buffer),
             nullptr,

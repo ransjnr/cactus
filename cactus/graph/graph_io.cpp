@@ -9,15 +9,30 @@
 #include <cstring>
 
 namespace {
-    constexpr uint32_t CACTUS_MAGIC = 0x54434143;  
+    constexpr uint32_t CACTUS_MAGIC = 0x54434143;
     constexpr uint32_t FLAG_HAS_SCALES = 1 << 0;
     constexpr uint32_t FLAG_INTERLEAVED = 1 << 3;
-    constexpr size_t HEADER_SIZE = 84;  
+    constexpr size_t HEADER_SIZE = 84;
 
     inline size_t align_offset(size_t offset, size_t alignment) {
         size_t remainder = offset % alignment;
         if (remainder == 0) return offset;
         return offset + (alignment - remainder);
+    }
+
+    inline void unpack_int4_to_int8(const uint8_t* packed, int8_t* unpacked, size_t packed_size) {
+        for (size_t i = 0; i < packed_size; i++) {
+            uint8_t byte = packed[i];
+
+            int8_t low = static_cast<int8_t>(byte & 0x0F);
+            if (low & 0x08) low |= 0xF0;  
+
+            int8_t high = static_cast<int8_t>((byte >> 4) & 0x0F);
+            if (high & 0x08) high |= 0xF0;  
+
+            unpacked[i * 2] = low;
+            unpacked[i * 2 + 1] = high;
+        }
     }
 }
 
@@ -48,6 +63,7 @@ size_t CactusGraph::mmap_embeddings(const std::string& filename) {
     size_t file_idx = mapped_files_.size();
     mapped_files_.push_back(std::move(mapped_file));
     node_to_mapped_file_[node_id] = file_idx;
+    weight_cache_[filename] = node_id;
     return node_id;
 }
 
@@ -117,6 +133,13 @@ void CactusGraph::set_grouped_scales(size_t node_id, size_t group_size, size_t n
     auto it = node_index_map_.find(node_id);
     if (it != node_index_map_.end()) {
         nodes_[it->second]->output_buffer.set_grouped_scales(group_size, num_groups, scales_ptr);
+    }
+}
+
+void CactusGraph::set_interleaved(size_t node_id, bool interleaved, size_t original_N) {
+    auto it = node_index_map_.find(node_id);
+    if (it != node_index_map_.end()) {
+        nodes_[it->second]->output_buffer.set_interleaved(interleaved, original_N);
     }
 }
 
@@ -329,8 +352,27 @@ LoadedNode load_into_graph(CactusGraph& graph, const std::string& filename) {
         throw std::runtime_error("Error reading node data: " + filename);
     }
 
-    size_t node_id = graph.input(shape, precision);
-    graph.set_input(node_id, buffer.data(), precision);
+    // Handle INT4 unpacking
+    std::vector<int8_t> unpacked_buffer;
+    Precision effective_precision = precision;
+    size_t effective_byte_size = byte_size;
+    const void* data_ptr = buffer.data();
+
+    if (precision == Precision::INT4) {
+        size_t packed_size = byte_size;
+        size_t unpacked_size = packed_size * 2;
+        unpacked_buffer.resize(unpacked_size);
+
+        unpack_int4_to_int8(reinterpret_cast<const uint8_t*>(buffer.data()),
+                           unpacked_buffer.data(), packed_size);
+
+        effective_precision = Precision::INT8;
+        effective_byte_size = unpacked_size;
+        data_ptr = unpacked_buffer.data();
+    }
+
+    size_t node_id = graph.input(shape, effective_precision);
+    graph.set_input(node_id, data_ptr, effective_precision);
 
     if (scales_bytes > 0 && group_size > 0 && num_groups > 0) {
         auto& node_buffer = graph.nodes_[graph.node_index_map_.at(node_id)]->output_buffer;
@@ -343,7 +385,7 @@ LoadedNode load_into_graph(CactusGraph& graph, const std::string& filename) {
         }
     }
 
-    return {node_id, shape, precision, byte_size};
+    return {node_id, shape, effective_precision, effective_byte_size};
 }
 
 MappedFile mmap_load(const std::string& filename) {
@@ -399,7 +441,8 @@ MappedFile::MappedFile(MappedFile&& other) noexcept
       scales_offset_(other.scales_offset_), scales_bytes_(other.scales_bytes_),
       alignment_(other.alignment_),
       is_interleaved_(other.is_interleaved_),
-      original_N_(other.original_N_) {
+      original_N_(other.original_N_),
+      unpacked_data_(std::move(other.unpacked_data_)) {
     other.fd_ = -1;
     other.mapped_data_ = nullptr;
     other.file_size_ = 0;
@@ -430,6 +473,7 @@ MappedFile& MappedFile::operator=(MappedFile&& other) noexcept {
         alignment_ = other.alignment_;
         is_interleaved_ = other.is_interleaved_;
         original_N_ = other.original_N_;
+        unpacked_data_ = std::move(other.unpacked_data_);
 
         other.fd_ = -1;
         other.mapped_data_ = nullptr;
@@ -457,10 +501,16 @@ const void* MappedFile::scales_data() const {
 }
 
 void* MappedFile::data() {
+    if (unpacked_data_) {
+        return unpacked_data_.get();
+    }
     return static_cast<char*>(mapped_data_) + data_offset_;
 }
 
 const void* MappedFile::data() const {
+    if (unpacked_data_) {
+        return unpacked_data_.get();
+    }
     return static_cast<const char*>(mapped_data_) + data_offset_;
 }
 
@@ -553,6 +603,23 @@ void MappedFile::parse_header() {
     if (data_offset_ + byte_size_ > file_size_) {
         throw std::runtime_error("File corrupted: data extends beyond file size");
     }
+
+    if (precision_ == Precision::INT4) {
+        unpack_int4_data();
+    }
+}
+
+void MappedFile::unpack_int4_data() {
+    size_t packed_size = byte_size_;
+    size_t unpacked_size = packed_size * 2;
+
+    unpacked_data_ = std::make_unique<int8_t[]>(unpacked_size);
+
+    const uint8_t* packed = static_cast<const uint8_t*>(mapped_data_) + data_offset_;
+    unpack_int4_to_int8(packed, unpacked_data_.get(), packed_size);
+
+    precision_ = Precision::INT8;
+    byte_size_ = unpacked_size;
 }
 
 void MappedFile::apply_madvise_hints() {

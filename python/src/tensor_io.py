@@ -90,11 +90,28 @@ def interleave_scales(scales: np.ndarray, block_size: int = INTERLEAVE_BLOCK) ->
     return scales.reshape(-1), original_N
 
 
+def pack_int4_pairs(data: np.ndarray) -> np.ndarray:
+    """Pack pairs of INT4 values (stored as int8) into single bytes.
+
+    Input: array of int8 values in range [-8, 7]
+    Output: array of uint8 with half the length, each byte containing two packed int4 values
+
+    Packing format: low nibble = first value, high nibble = second value
+    """
+    assert len(data) % 2 == 0, "Data length must be even for INT4 packing"
+
+    pairs = data.reshape(-1, 2)
+    low = pairs[:, 0].astype(np.uint8) & 0x0F
+    high = (pairs[:, 1].astype(np.uint8) & 0x0F) << 4
+
+    return (low | high).astype(np.uint8)
+
+
 def save_tensor_with_header(tensor, output_path, precision='INT8', transpose=False, stats_tracker=None, args=None, model_type=None):
     """Save a tensor to binary format with header metadata and group-wise quantization.
 
     For 2D tensors with INT8/INT4 precision:
-    - INT4 is unpacked to INT8 at save time (no runtime unpacking needed)
+    - INT4 is packed (2 values per byte) for 50% storage savings, unpacked to INT8 at load time
     - Weights are interleaved in blocks of 4 rows for SIMD efficiency
     - Layout: [N/4, K/4, 4, 4] enables vdotq_laneq_s32 for efficient GEMV/GEMM
 
@@ -245,6 +262,8 @@ def save_tensor_with_header(tensor, output_path, precision='INT8', transpose=Fal
         scales_interleaved, _ = interleave_scales(scales, INTERLEAVE_BLOCK)
         scales_fp16 = scales_interleaved.astype(np.float16)
 
+        packed_data = pack_int4_pairs(quantized_interleaved)
+
         N_padded = ((N + INTERLEAVE_BLOCK - 1) // INTERLEAVE_BLOCK) * INTERLEAVE_BLOCK
 
         if stats_tracker:
@@ -258,7 +277,7 @@ def save_tensor_with_header(tensor, output_path, precision='INT8', transpose=Fal
 
         with open(output_path, 'wb') as f:
             ndim = 2
-            data_bytes = quantized_interleaved.size
+            data_bytes = packed_data.size  
             scales_bytes = scales_fp16.size * 2
             flags = FLAG_HAS_SCALES | FLAG_INTERLEAVED
             if transpose:
@@ -274,7 +293,7 @@ def save_tensor_with_header(tensor, output_path, precision='INT8', transpose=Fal
             f.write(struct.pack('<Q', 0))                  # 8 bytes
             f.write(struct.pack('<Q', 0))                  # 8 bytes
 
-            f.write(struct.pack('<I', 0))                  # precision: 0 = INT8 (4 bytes)
+            f.write(struct.pack('<I', 3))                  # precision: 3 = INT4 packed (4 bytes)
             f.write(struct.pack('<Q', data_bytes))         # 8 bytes
             f.write(struct.pack('<Q', scales_bytes))       # 8 bytes
             f.write(struct.pack('<I', GROUP_SIZE))         # 4 bytes
@@ -288,7 +307,7 @@ def save_tensor_with_header(tensor, output_path, precision='INT8', transpose=Fal
             scales_end = align_offset(header_size, CACTUS_ALIGNMENT) + scales_bytes
             f.write(compute_padding(scales_end, CACTUS_ALIGNMENT))
 
-            f.write(quantized_interleaved.tobytes())
+            f.write(packed_data.tobytes())
 
         return
 
@@ -451,4 +470,4 @@ def print_quantization_summary(quantization_stats, args=None):
         print(f"MSE - Mean: {np.mean(mse_values):.2e}, Max: {np.max(mse_values):.2e}, Median: {np.median(mse_values):.2e}, Min: {np.min(mse_values):.2e}")
         print(f"SNR - Mean: {np.mean(snr_values):.1f}dB, Max: {np.max(snr_values):.1f}dB, Median: {np.median(snr_values):.1f}dB, Min: {np.min(snr_values):.1f}dB")
         print(f"CosSim - Mean: {np.mean(cos_sim_values):.6f}, Max: {np.max(cos_sim_values):.6f}, Median: {np.median(cos_sim_values):.6f}, Min: {np.min(cos_sim_values):.6f}")
-        print(f"Processed {int8_count} INT8 tensors, {int4_count} INT4 tensors (stored as INT8), {fp16_count} FP16 tensors")
+        print(f"Processed {int8_count} INT8 tensors, {int4_count} INT4 tensors, {fp16_count} FP16 tensors")

@@ -101,10 +101,10 @@ graph.hard_reset();
 
 | Device | LFM2.5-1.2B<br>(1k-Prefill/100-Decode) | LFM2.5-VL-1.6B<br>(256px-Latency & Decode) | Whisper-Small<br>(30s-audio-Latency & Decode)
 |--------|--------|--------|----------|
-| Mac M4 Pro | 582/77 toks/sec| 1.2s(0.3s*) & 76 toks/sec | 1.5s(0.2s*) & 65 toks/sec |
+| Mac M4 Pro | 582/77 tps| 1.2s(0.3s*) & 76 tps | 1.5s(0.2s*) & 65 tps |
 | iPad/Mac M4 | - | - | - |
-| iPhone 17 Pro | 300/33 toks/sec | 1.6s(0.3s*) & 33 toks/sec | 3.0s(0.6s*) & 70 toks/sec |
-| Galaxy S25 Ultra | 226/35 toks/sec | 2.6s & 35 toks/sec | 2.9s & 44 toks/sec |
+| iPhone 17 Pro | 300/33 tps | 1.6s(0.3s*) & 33 tps | 3.0s(0.6s*) & 70 tps |
+| Galaxy S25 Ultra | 226/35 tps | 2.6s & 35 tps | 2.9s & 44 tps |
 | Pixel 10 Pro | - | - | - |
 | Vivo X200 Pro | - | - | - |
 
@@ -118,7 +118,7 @@ graph.hard_reset();
 | iPad/Mac M1 | - | - | - |
 | iPhone 13 Mini | - | - | - |
 | Galaxy A56 | - | - | - |
-| Pixel 6a | 218/44 toks/sec | 3.0s & 42 toks/sec | - |
+| Pixel 6a | 218/44 tps | 3.0s & 42 tps | 1.8s & 138 tps |
 | Nothing CMF | - | - | - |
 | Raspberry Pi 5 | - | - | - |
 
@@ -135,20 +135,19 @@ graph.hard_reset();
   | LiquidAI/LFM2-700M | 498MB | completion, tools, embed |                                                                                                               
   | google/gemma-3-1b-it | 642MB | completion |                                                                                                                           
   | LiquidAI/LFM2.5-1.2B-Thinking | 474MB | completion, tools, embed |                                                                                                    
-  | LiquidAI/LFM2.5-1.2B-Instruct | 474MB | completion, tools, embed |                                                                                                    
-  | LiquidAI/LFM2-1.2B-RAG | 474MB | completion, tools, embed |                                                                                                           
-  | LiquidAI/LFM2-1.2B-Tool | 474MB | completion, tools, embed |                                                                                                          
-  | Qwen/Qwen3-1.7B | 749MB | completion, tools, embed |                                                                                                                  
+  | LiquidAI/LFM2.5-1.2B-Instruct | 474MB | completion, tools, embed |                                                                                                      
+  | Qwen/Qwen3-1.7B | 749MB | completion, tools, embed | 
+  | LiquidAI/LFM2-2.6B | 1.42G | completion, tools, embed |                                                                                                              
   | **VLMs** | | |                                                                                                                                                        
   | LiquidAI/LFM2-VL-450M | 448MB | vision, txt & img embed, Apple NPU |                                                                                                            
   | LiquidAI/LFM2.5-VL-1.6B | 954MB | vision, txt & img embed, Apple NPU |                                                                                                          
   | **Speech** | | |                                                                                                                                                      
-  | UsefulSensors/moonshine-base | 150MB | transcription, speech embed |                                                                                                         
+  | UsefulSensors/moonshine-base | 80MB | transcription, speech embed |                                                                                                         
   | openai/whisper-small | 283MB | transcription, speech embed, Apple NPU |                                                                                                                 
   | openai/whisper-medium | 658MB | transcription, speech embed, Apple NPU |                                                                                                                
   | **Embeddings** | | |                                                                                                                                                  
   | nomic-ai/nomic-embed-text-v2-moe | 451MB | embed |                                                                                                                    
-  | Qwen/Qwen3-Embedding-0.6B | 514MB | embed |          
+  | Qwen/Qwen3-Embedding-0.6B | 514MB | embed | 
 
 ## Using this repo on a Mac
 
@@ -163,6 +162,7 @@ git clone https://github.com/cactus-compute/cactus && cd cactus && source ./setu
 | `cactus convert [model] [dir]` | Converts model, supports LoRA merging (`--lora <path>`) |
 | `cactus build` | Builds for ARM (`--apple` or `--android`) |
 | `cactus test` | Runs tests (`--ios` / `--android`, `--model [name/path]`), `--precision` |
+| `cactus transcribe [model]` | Transcribe audio file (`--file`) or live microphone |
 | `cactus clean` | Removes build artifacts |
 | `cactus --help` | Shows all commands and flags (please run this to see all commands) |
 
@@ -188,7 +188,8 @@ git clone https://github.com/cactus-compute/cactus && cd cactus && source ./setu
 5. [UC Irvine's AI@UCI](https://aiclub.ics.uci.edu/)
 6. [Imperial College's AI Society](https://www.imperialcollegeunion.org/csp/1391)
 7. [University of Pennsylvania's AI@Penn](https://ai-at-penn-main-105.vercel.app/)
-8. [Universit of Colorado Boulder's AI Club](https://www.cuaiclub.org/)
+8. [University of Michigan Ann-Arbor MSAIL](https://msail.github.io/)
+9. [University of Colorado Boulder's AI Club](https://www.cuaiclub.org/)
 
 ## Join The Community
 - [Reddit Channel](https://www.reddit.com/r/cactuscompute/)
