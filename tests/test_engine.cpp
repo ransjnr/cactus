@@ -673,7 +673,20 @@ static bool test_stream_transcription() {
         return false;
     }
 
-    cactus_stream_transcribe_t stream = cactus_stream_transcribe_init(model);
+    struct UserData {
+        std::string transcription;
+    } user_data;
+
+    cactus_stream_transcribe_t stream = cactus_stream_transcribe_start(
+        model,
+        R"({"min_chunk_size": 16000, "confirmation_threshold": 1.0})",
+        [](const char* confirmed, const char* pending, void* user_data) {
+            const auto ud = static_cast<UserData*>(user_data);
+            std::cout << ud->transcription << pending << std::endl;
+            ud->transcription += confirmed;
+        },
+        &user_data
+    );
     if (!stream) {
         std::cerr << "[✗] Failed to initialize stream transcribe\n";
         cactus_destroy(model);
@@ -684,7 +697,7 @@ static bool test_stream_transcription() {
     FILE* wav_file = fopen(audio_path.c_str(), "rb");
     if (!wav_file) {
         std::cerr << "[✗] Failed to open audio file\n";
-        cactus_stream_transcribe_destroy(stream);
+        cactus_stream_transcribe_stop(stream, nullptr, 0);
         cactus_destroy(model);
         return false;
     }
@@ -697,69 +710,45 @@ static bool test_stream_transcription() {
     }
     fclose(wav_file);
 
-    const size_t chunk_size = 96000;
+    const size_t chunk_size = 16000;
     Timer timer;
-    std::string full_transcription;
 
     for (size_t offset = 0; offset < pcm_samples.size(); offset += chunk_size) {
         size_t size = std::min(chunk_size, pcm_samples.size() - offset);
 
-        cactus_stream_transcribe_insert(
-            stream,
-            reinterpret_cast<const uint8_t*>(pcm_samples.data() + offset),
-            size * sizeof(int16_t)
-        );
-
-        char response[1 << 15] = {0};
         int result = cactus_stream_transcribe_process(
             stream,
-            response,
-            sizeof(response), R"({"confirmation_threshold": 0.90})"
+            reinterpret_cast<const uint8_t*>(pcm_samples.data() + offset),
+            size * sizeof(int16_t),
+            nullptr,
+            0
         );
 
         if (result < 0) {
             std::cerr << "\n[✗] Processing failed\n";
-            cactus_stream_transcribe_destroy(stream);
+            cactus_stream_transcribe_stop(stream, nullptr, 0);
             cactus_destroy(model);
             return false;
         }
-
-        std::string response_str(response);
-        std::string confirmed = json_string(response_str, "confirmed");
-        std::string pending = json_string(response_str, "pending");
-
-        full_transcription += confirmed;
-        if (!confirmed.empty()) std::cout << "├─ confirmed: " << confirmed << "\n";
-        if (!pending.empty()) std::cout << "├─ pending: " << pending << "\n";
     }
 
-    char final_response[1 << 15] = {0};
-    int final_result = cactus_stream_transcribe_finalize(
+    int stopping_result = cactus_stream_transcribe_stop(
         stream,
-        final_response,
-        sizeof(final_response)
+        nullptr,
+        0
     );
 
-    if (final_result < 0) {
-        std::cerr << "[✗] Finalization failed\n";
-        cactus_stream_transcribe_destroy(stream);
+    if (stopping_result < 0) {
+        std::cerr << "[✗] Stopping failed\n";
         cactus_destroy(model);
         return false;
-    }
-
-    std::string final_str(final_response);
-    std::string final_confirmed = json_string(final_str, "confirmed");
-
-    if (!final_confirmed.empty()) {
-        full_transcription += final_confirmed;
-        std::cout << "└─ confirmed: " << final_confirmed << "\n";
     }
 
     double elapsed = timer.elapsed_ms();
 
     size_t word_count = 0;
     bool in_word = false;
-    for (char c : full_transcription) {
+    for (char c : user_data.transcription) {
         if (std::isspace(c)) {
             in_word = false;
         } else if (!in_word) {
@@ -775,9 +764,8 @@ static bool test_stream_transcription() {
               << "  \"pcm_samples\": " << pcm_samples.size() << ",\n"
               << "  \"duration_sec\": " << std::setprecision(2) << (pcm_samples.size() / 16000.0) << ",\n"
               << "  \"words_transcribed\": " << word_count << "\n"
-              << "├─ Full transcription: \"" << full_transcription << "\"" << std::endl;
+              << "├─ Full transcription: \"" << user_data.transcription << "\"" << std::endl;
 
-    cactus_stream_transcribe_destroy(stream);
     cactus_destroy(model);
     return true;
 }

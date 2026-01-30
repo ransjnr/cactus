@@ -103,31 +103,27 @@ CACTUS_FFI_EXPORT int cactus_transcribe(
 // Streaming Transcription
 // ----------------------------------------------------------------------------
 
-CACTUS_FFI_EXPORT cactus_stream_transcribe_t cactus_stream_transcribe_init(
-    cactus_model_t model
-);
+typedef void (*cactus_stream_transcribe_callback)(const char* confirmed, const char* pending, void* user_data);
 
-CACTUS_FFI_EXPORT int cactus_stream_transcribe_insert(
-    cactus_stream_transcribe_t stream,
-    const uint8_t* pcm_buffer,
-    size_t pcm_buffer_size
+CACTUS_FFI_EXPORT cactus_stream_transcribe_t cactus_stream_transcribe_start(
+    cactus_model_t model,
+    const char* options_json,                          // optional
+    cactus_stream_transcribe_callback callback,        // optional
+    void* user_data                                    // optional
 );
 
 CACTUS_FFI_EXPORT int cactus_stream_transcribe_process(
     cactus_stream_transcribe_t stream,
-    char* response_buffer,
-    size_t buffer_size,
-    const char* options_json                // optional
-);
-
-CACTUS_FFI_EXPORT int cactus_stream_transcribe_finalize(
-    cactus_stream_transcribe_t stream,
-    char* response_buffer,
+    const uint8_t* pcm_buffer,
+    size_t pcm_buffer_size,
+    char* response_buffer,                             // optional: NULL if using only callback
     size_t buffer_size
 );
 
-CACTUS_FFI_EXPORT void cactus_stream_transcribe_destroy(
-    cactus_stream_transcribe_t stream
+CACTUS_FFI_EXPORT int cactus_stream_transcribe_stop(
+    cactus_stream_transcribe_t stream,
+    char* response_buffer,                             // optional: NULL if using only callback
+    size_t buffer_size
 );
 
 // ----------------------------------------------------------------------------
