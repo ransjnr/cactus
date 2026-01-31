@@ -220,7 +220,10 @@ int run_live_transcription(cactus_model_t model) {
         return 1;
     }
 
-    cactus_stream_transcribe_t stream = cactus_stream_transcribe_init(model);
+    cactus_stream_transcribe_t stream = cactus_stream_transcribe_start(
+        model, R"({"confirmation_threshold": 1.0, "min_chunk_size": 16000})"
+    );
+
     if (!stream) {
         std::cerr << colored("Error: ", Color::RED + Color::BOLD)
                   << "Failed to initialize streaming transcription\n";
@@ -264,38 +267,31 @@ int run_live_transcription(cactus_model_t model) {
             }
 
             if (!audio_chunk.empty()) {
-                int insert_result = cactus_stream_transcribe_insert(
+                int process_result = cactus_stream_transcribe_process(
                     stream,
                     audio_chunk.data(),
-                    audio_chunk.size()
+                    audio_chunk.size(),
+                    response_buffer.data(),
+                    response_buffer.size()
                 );
 
-                if (insert_result == 0) {
-                    int process_result = cactus_stream_transcribe_process(
-                        stream,
-                        response_buffer.data(),
-                        response_buffer.size(),
-                        nullptr
-                    );
+                if (process_result >= 0) {
+                    std::string json_str(response_buffer.data());
+                    std::string confirmed = extract_json_value(json_str, "confirmed");
+                    std::string pending = extract_json_value(json_str, "pending");
 
-                    if (process_result >= 0) {
-                        std::string json_str(response_buffer.data());
-                        std::string confirmed = extract_json_value(json_str, "confirmed");
-                        std::string pending = extract_json_value(json_str, "pending");
+                    // Clear line and show transcription
+                    std::cout << Color::CLEAR_LINE;
+                    if (!confirmed_text.empty()) {
+                        std::cout << colored(confirmed_text, Color::GREEN);
+                    }
+                    if (!pending.empty()) {
+                        std::cout << colored(pending, Color::YELLOW);
+                    }
+                    std::cout << std::flush;
 
-                        if (!confirmed.empty()) {
-                            confirmed_text += confirmed + " ";
-                        }
-
-                        // Clear line and show transcription
-                        std::cout << Color::CLEAR_LINE;
-                        if (!confirmed_text.empty()) {
-                            std::cout << colored(confirmed_text, Color::GREEN);
-                        }
-                        if (!pending.empty()) {
-                            std::cout << colored(pending, Color::YELLOW);
-                        }
-                        std::cout << std::flush;
+                    if (!confirmed.empty()) {
+                        confirmed_text += confirmed + " ";
                     }
                 }
             }
@@ -307,7 +303,7 @@ int run_live_transcription(cactus_model_t model) {
     g_audio_state.recording = false;
     SDL_PauseAudioDevice(device, 1);
 
-    int finalize_result = cactus_stream_transcribe_finalize(
+    int stopping_result = cactus_stream_transcribe_stop(
         stream,
         response_buffer.data(),
         response_buffer.size()
@@ -316,7 +312,7 @@ int run_live_transcription(cactus_model_t model) {
     std::cout << "\n\n";
     print_separator();
 
-    if (finalize_result >= 0) {
+    if (stopping_result >= 0) {
         std::string json_str(response_buffer.data());
         std::string final_text = extract_json_value(json_str, "confirmed");
         std::string full_transcript = confirmed_text + final_text;
@@ -335,7 +331,6 @@ int run_live_transcription(cactus_model_t model) {
     if (input_thread.joinable()) {
         input_thread.detach();
     }
-    cactus_stream_transcribe_destroy(stream);
     SDL_CloseAudioDevice(device);
     SDL_Quit();
 
