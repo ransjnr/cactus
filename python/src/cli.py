@@ -212,6 +212,11 @@ def cmd_download(args):
 
 def check_libcurl():
     """Check if libcurl development libraries are installed."""
+    import platform
+
+    if platform.system() == 'Darwin':
+        return True
+
     if check_command('pkg-config'):
         result = subprocess.run(['pkg-config', '--exists', 'libcurl'], capture_output=True)
         if result.returncode == 0:
@@ -222,7 +227,6 @@ def check_libcurl():
         '/usr/include/x86_64-linux-gnu/curl/curl.h',
         '/usr/include/aarch64-linux-gnu/curl/curl.h',
         '/usr/local/include/curl/curl.h',
-        '/opt/homebrew/include/curl/curl.h',
     ]
     for path in curl_paths:
         if Path(path).exists():
