@@ -172,6 +172,7 @@ def update_org_readme(api, org):
         return
 
     try:
+        api.create_repo(repo_id=f"{org}/README", repo_type="space", exist_ok=True)
         api.upload_file(
             path_or_fileobj=str(readme),
             path_in_repo="README.md",
