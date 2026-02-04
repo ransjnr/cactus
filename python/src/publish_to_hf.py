@@ -63,10 +63,8 @@ def get_model_name(model_id):
     return model_id.split("/")[-1]
 
 
-def export_model(model_id, token, precision):
-    args = argparse.Namespace(
-        model_name=model_id, output_dir=None, precision=precision, token=token
-    )
+def export_model(model_id, token):
+    args = argparse.Namespace(model_name=model_id, output_dir=None, token=token)
     if cmd_convert(args) != 0:
         return None
     return get_weights_dir(model_id)
@@ -94,7 +92,7 @@ def export_pro_weights(model_id, bits):
     return mlpackage if mlpackage.exists() else None
 
 
-def stage_model(model_id, weights_dir, precision, bits):
+def stage_model(model_id, weights_dir, bits):
     model_name = get_model_name(model_id)
     stage = STAGE_DIR / model_name
 
@@ -112,10 +110,7 @@ def stage_model(model_id, weights_dir, precision, bits):
     fingerprint = hashlib.sha256()
     fingerprint.update(sha256(model_zip).encode())
 
-    config = {
-        "model_type": model_name,
-        "precision": precision,
-    }
+    config = {"model_type": model_name}
 
     if model_id in PRO_MODELS:
         try:
@@ -166,11 +161,28 @@ def changed(curr, prev):
     return curr.get("fingerprint") != prev.get("fingerprint")
 
 
+def update_org_readme(api, org):
+    readme = PROJECT_ROOT / "README.md"
+    if not readme.exists():
+        return
+
+    try:
+        api.upload_file(
+            path_or_fileobj=str(readme),
+            path_in_repo="README.md",
+            repo_id=f"{org}/README",
+            repo_type="space",
+            commit_message="Update organization README",
+        )
+        print("Updated organization README")
+    except Exception:
+        print("Failed to update organization README")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
     parser.add_argument("--org", required=True)
-    parser.add_argument("--precision", required=True)
     parser.add_argument("--bits", required=True)
     args = parser.parse_args()
 
@@ -187,14 +199,12 @@ def main():
 
         stage_dir = None
         try:
-            weights_dir = export_model(model_id, token, args.precision)
+            weights_dir = export_model(model_id, token)
             if not weights_dir:
                 print("Export failed")
                 continue
 
-            stage_dir, config = stage_model(
-                model_id, weights_dir, args.precision, args.bits
-            )
+            stage_dir, config = stage_model(model_id, weights_dir, args.bits)
             prev = get_prev_config(api, repo_id, args.version)
 
             api.create_repo(repo_id=repo_id, repo_type="model", exist_ok=True)
@@ -227,6 +237,8 @@ def main():
             if stage_dir and stage_dir.exists():
                 shutil.rmtree(stage_dir)
                 print("Cleaned up stage directory")
+
+    update_org_readme(api, args.org)
 
 
 if __name__ == "__main__":
