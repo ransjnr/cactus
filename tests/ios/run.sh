@@ -198,6 +198,7 @@ if ! gem list xcodeproj -i; then
         echo "  brew install rbenv ruby-build"
         echo "  rbenv install 2.6.10"
         echo "  rbenv global 2.6.10"
+        echo "  Restart your terminal"
         exit 1
     fi
 fi
