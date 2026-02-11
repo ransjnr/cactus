@@ -544,6 +544,10 @@ size_t CactusGraph::scalar_sin(size_t input) {
     return add_node(OpType::SCALAR_SIN, {input}, {});
 }
 
+size_t CactusGraph::relu(size_t input) {
+    return add_node(OpType::RELU, {input}, {});
+}
+
 size_t CactusGraph::silu(size_t input) {
     return add_node(OpType::SILU, {input}, {});
 }
@@ -554,6 +558,10 @@ size_t CactusGraph::gelu(size_t input) {
 
 size_t CactusGraph::gelu_erf(size_t input) {
     return add_node(OpType::GELU_ERF, {input}, {});
+}
+
+size_t CactusGraph::sigmoid(size_t input) {
+    return add_node(OpType::SIGMOID, {input}, {});
 }
 
 size_t CactusGraph::tanh(size_t input) {

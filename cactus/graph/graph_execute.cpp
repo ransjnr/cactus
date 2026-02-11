@@ -57,7 +57,7 @@ static const char* op_type_names[] = {
     "RMS_NORM", "ROPE", "ROPE_GPTJ", "SOFTMAX", "ATTENTION", "ATTENTION_INT8_HYBRID", "CONV1D_CAUSAL", "CONV1D_K3", "CONV1D_K7S3", "CONV1D",
     "SCALAR_ADD", "SCALAR_SUBTRACT", "SCALAR_MULTIPLY", "SCALAR_DIVIDE",
     "SCALAR_EXP", "SCALAR_SQRT", "SCALAR_COS", "SCALAR_SIN",
-    "SILU", "GELU", "GELU_ERF", "TANH",
+    "RELU", "SILU", "GELU", "GELU_ERF", "SIGMOID", "TANH",
     "SAMPLE", "CONCAT",
     "SCATTER_TOPK",
     "TOPK", "LAYERNORM", "GROUPNORM",
@@ -94,9 +94,11 @@ void compute_node_optimized(GraphNode& node, const std::vector<std::unique_ptr<G
             compute_unary_op_node(node, nodes, node_index_map);
             break;
 
+        case OpType::RELU:
         case OpType::SILU:
         case OpType::GELU:
         case OpType::GELU_ERF:
+        case OpType::SIGMOID:
         case OpType::TANH:
             compute_activation_node(node, nodes, node_index_map);
             break;

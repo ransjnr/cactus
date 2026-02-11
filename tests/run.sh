@@ -132,11 +132,13 @@ TRANSCRIBE_MODEL_DIR=$(echo "$TRANSCRIBE_MODEL_NAME" | sed 's|.*/||' | tr '[:upp
 
 export CACTUS_TEST_MODEL="$PROJECT_ROOT/weights/$MODEL_DIR"
 export CACTUS_TEST_TRANSCRIBE_MODEL="$PROJECT_ROOT/weights/$TRANSCRIBE_MODEL_DIR"
+export CACTUS_TEST_VAD_MODEL="$PROJECT_ROOT/weights/silero-vad"
 export CACTUS_TEST_ASSETS="$PROJECT_ROOT/tests/assets"
 export CACTUS_INDEX_PATH="$PROJECT_ROOT/tests/assets"
 
 echo "Using model path: $CACTUS_TEST_MODEL"
 echo "Using transcribe model path: $CACTUS_TEST_TRANSCRIBE_MODEL"
+echo "Using VAD model path: $CACTUS_TEST_VAD_MODEL"
 echo "Using assets path: $CACTUS_TEST_ASSETS"
 echo "Using index path: $CACTUS_INDEX_PATH"
 

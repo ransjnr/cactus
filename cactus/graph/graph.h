@@ -117,7 +117,7 @@ enum class OpType {
     SUM, MEAN, VARIANCE, MIN, MAX,
     RMS_NORM, ROPE, ROPE_GPTJ, SOFTMAX, ATTENTION, ATTENTION_INT8_HYBRID, CONV1D_CAUSAL, CONV1D_K3, CONV1D_K7S3, CONV1D,
     SCALAR_ADD, SCALAR_SUBTRACT, SCALAR_MULTIPLY, SCALAR_DIVIDE, SCALAR_EXP, SCALAR_SQRT, SCALAR_COS, SCALAR_SIN,
-    SILU, GELU, GELU_ERF, TANH,
+    RELU, SILU, GELU, GELU_ERF, SIGMOID, TANH,
     SAMPLE, CONCAT,
     SCATTER_TOPK,
     TOPK, LAYERNORM, GROUPNORM,
@@ -415,9 +415,11 @@ public:
     size_t scalar_cos(size_t input);
     size_t scalar_sin(size_t input);
     
+    size_t relu(size_t input);
     size_t silu(size_t input);
     size_t gelu(size_t input);
     size_t gelu_erf(size_t input);
+    size_t sigmoid(size_t input);
     size_t tanh(size_t input);
     
     size_t matmul(size_t input1, size_t input2, bool pretransposed_rhs = false, ComputeBackend backend = ComputeBackend::CPU);

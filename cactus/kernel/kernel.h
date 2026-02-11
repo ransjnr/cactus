@@ -85,11 +85,15 @@ void cactus_gpt_j_rope_f16(const __fp16* input, __fp16* output, size_t batch_siz
 void cactus_softmax_f16(const __fp16* input, __fp16* output, size_t batch_size,
                          size_t seq_len, size_t vocab_size);
 
+void cactus_relu_f16(const __fp16* input, __fp16* output, size_t num_elements);
+
 void cactus_silu_f16(const __fp16* input, __fp16* output, size_t num_elements);
 
 void cactus_gelu_f16(const __fp16* input, __fp16* output, size_t num_elements);
 
 void cactus_gelu_f16_erf(const __fp16* input, __fp16* output, size_t num_elements);
+
+void cactus_sigmoid_f16(const __fp16* input, __fp16* output, size_t num_elements);
 
 void cactus_tanh_f16(const __fp16* input, __fp16* output, size_t num_elements);
 

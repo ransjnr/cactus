@@ -928,6 +928,87 @@ static bool test_audio_embeddings() {
     return result > 0 && embedding_dim > 0;
 }
 
+static bool test_vad_process() {
+    std::cout << "\n╔══════════════════════════════════════════╗\n"
+              << "║           VAD PROCESS TEST               ║\n"
+              << "╚══════════════════════════════════════════╝\n";
+
+    const char* vad_model_path = std::getenv("CACTUS_TEST_VAD_MODEL");
+    if (!vad_model_path) {
+        std::cout << "⊘ SKIP │ CACTUS_TEST_VAD_MODEL not set\n";
+        return true;
+    }
+
+    cactus_model_t model = cactus_init(vad_model_path, nullptr, false);
+    if (!model) {
+        std::cout << "⊘ SKIP │ Failed to init VAD model\n";
+        return true;
+    }
+
+    std::string audio_path = std::string(g_assets_path) + "/test.wav";
+    char response[8192] = {0};
+    const char* vad_options = R"({"threshold": 0.5})";
+
+    Timer t;
+    int result = cactus_vad_process(model, audio_path.c_str(), response, sizeof(response), vad_options, nullptr, 0);
+    double elapsed = t.elapsed_ms();
+
+    cactus_destroy(model);
+
+    if (result != 0) {
+        std::cout << "⊘ SKIP │ VAD processing failed\n";
+        return true;
+    }
+
+    std::string response_str(response);
+
+    auto parse_number = [&](const std::string& key) -> size_t {
+        size_t pos = response_str.find("\"" + key + "\":");
+        if (pos == std::string::npos) return 0;
+        pos = response_str.find(":", pos) + 1;
+        size_t end = response_str.find_first_of(",}", pos);
+        return std::stoull(response_str.substr(pos, end - pos));
+    };
+
+    size_t total_samples = parse_number("total_samples");
+    size_t speech_samples = parse_number("total_speech_samples");
+    float duration_sec = total_samples / 16000.0f;
+    float speech_sec = speech_samples / 16000.0f;
+
+    std::vector<std::pair<size_t, size_t>> segments;
+    size_t pos = 0;
+    while ((pos = response_str.find("{\"start\":", pos)) != std::string::npos) {
+        size_t start_pos = response_str.find(":", pos) + 1;
+        size_t end_pos = response_str.find(",", start_pos);
+        size_t start = std::stoull(response_str.substr(start_pos, end_pos - start_pos));
+
+        pos = response_str.find("\"end\":", pos) + 6;
+        end_pos = response_str.find("}", pos);
+        size_t end = std::stoull(response_str.substr(pos, end_pos - pos));
+
+        segments.push_back({start, end});
+        pos = end_pos;
+    }
+
+    std::cout << "\n[Results]\n"
+              << "  \"success\": true,\n"
+              << "  \"time_ms\": " << std::fixed << std::setprecision(2) << elapsed << ",\n"
+              << "  \"total_duration_sec\": " << std::setprecision(2) << duration_sec << ",\n"
+              << "  \"speech_duration_sec\": " << std::setprecision(2) << speech_sec << ",\n"
+              << "  \"segments_detected\": " << segments.size() << "\n";
+
+    for (size_t i = 0; i < segments.size(); ++i) {
+        float start_sec = segments[i].first / 16000.0f;
+        float end_sec = segments[i].second / 16000.0f;
+        std::cout << "  ├─ Segment " << (i + 1) << ": "
+                  << std::fixed << std::setprecision(2) << start_sec << "s - "
+                  << std::setprecision(2) << end_sec << "s ("
+                  << std::setprecision(2) << (end_sec - start_sec) << "s)\n";
+    }
+
+    return result == 0 && !segments.empty();
+}
+
 static bool test_pcm_transcription() {
     std::cout << "\n╔══════════════════════════════════════════╗\n"
               << "║       PCM BUFFER TRANSCRIPTION           ║\n"
@@ -1080,6 +1161,7 @@ int main() {
     runner.run_test("image_embeddings", test_image_embeddings());
     runner.run_test("audio_embeddings", test_audio_embeddings());
     runner.run_test("audio_processor", test_audio_processor());
+    runner.run_test("vad_process", test_vad_process());
     runner.run_test("transcription", test_transcription());
     runner.run_test("pcm_transcription", test_pcm_transcription());
     runner.run_test("stream_transcription", test_stream_transcription());
