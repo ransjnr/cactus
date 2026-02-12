@@ -123,7 +123,8 @@ enum class OpType {
     TOPK, LAYERNORM, GROUPNORM,
     INDEX,
     PERSISTENT,
-    QUANTIZE_ACTIVATIONS
+    QUANTIZE_ACTIVATIONS,
+    LSTM_CELL
 };
 
 struct PrecisionTraits {
@@ -350,6 +351,7 @@ void compute_layernorm_node(GraphNode& node, const std::vector<std::unique_ptr<G
 void compute_groupnorm_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
 void compute_persistent_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
 void compute_index_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
+void compute_lstm_cell_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
 
 void shrink_thread_local_buffers();
 
@@ -501,6 +503,8 @@ public:
     size_t persistent(size_t source_node);
     bool is_populated(size_t persistent_node_id) const;
     void invalidate_persistent(size_t persistent_node_id);
+
+    size_t lstm_cell(size_t input, size_t h_prev, size_t c_prev, size_t weight_ih, size_t weight_hh, size_t bias_ih, size_t bias_hh);
 
     std::vector<std::unique_ptr<GraphNode>> nodes_;
     std::unordered_map<size_t, size_t> node_index_map_;

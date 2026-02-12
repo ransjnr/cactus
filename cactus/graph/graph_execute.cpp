@@ -33,6 +33,7 @@ extern void compute_conv1d_node(GraphNode& node, const std::vector<std::unique_p
 extern void compute_groupnorm_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
 extern void compute_rope_gptj_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
 extern void shrink_thread_local_buffers();
+extern void compute_lstm_cell_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
 
 extern void compute_transpose_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
 extern void compute_gather_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map);
@@ -63,7 +64,8 @@ static const char* op_type_names[] = {
     "TOPK", "LAYERNORM", "GROUPNORM",
     "INDEX",
     "PERSISTENT",
-    "QUANTIZE_ACTIVATIONS"
+    "QUANTIZE_ACTIVATIONS",
+    "LSTM_CELL"
 };
 
 static const char* get_op_name(OpType op) {
@@ -217,6 +219,10 @@ void compute_node_optimized(GraphNode& node, const std::vector<std::unique_ptr<G
 
         case OpType::QUANTIZE_ACTIVATIONS:
             compute_quantize_activations_node(node, nodes, node_index_map);
+            break;
+
+        case OpType::LSTM_CELL:
+            compute_lstm_cell_node(node, nodes, node_index_map);
             break;
 
         default:

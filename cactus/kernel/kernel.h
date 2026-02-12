@@ -199,4 +199,19 @@ inline size_t kv_scales_count(size_t seq_len, size_t kv_heads, size_t head_dim, 
 
 void cactus_unpack_int4_to_int8(const uint8_t* packed, int8_t* unpacked, size_t unpacked_count);
 
+void cactus_lstm_cell_f16(
+    const __fp16* x_input,
+    const __fp16* h_prev,
+    const __fp16* c_prev,
+    const __fp16* weight_ih,
+    const __fp16* weight_hh,
+    const __fp16* bias_ih,
+    const __fp16* bias_hh,
+    __fp16* h_new,
+    __fp16* c_new,
+    size_t batch_size,
+    size_t input_size,
+    size_t hidden_size
+);
+
 #endif

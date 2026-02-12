@@ -842,48 +842,14 @@ private:
     size_t last_token_count_ = 0;
 };
 
-class SileroVAD {
-public:
-    SileroVAD();
-    ~SileroVAD();
-
-    bool init(const std::string& weights_path);
-    float process_chunk(const float* audio, size_t samples);
-    void reset();
-    bool is_initialized() const { return initialized_; }
-
-private:
-    void build_graph();
-    void load_weights();
-
-    CactusGraph graph_;
-    std::string weights_path_;
-    bool initialized_ = false;
-
-    size_t input_node_;
-    size_t h_prev_node_;
-    size_t c_prev_node_;
-    size_t h_new_node_;
-    size_t c_new_node_;
-    size_t output_node_;
-
-    size_t stft_basis_;
-    struct EncoderBlock {
-        size_t conv_weight;
-        size_t conv_bias;
-    };
-    std::vector<EncoderBlock> encoder_blocks_;
-    size_t lstm_weight_ih_, lstm_weight_hh_;
-    size_t lstm_bias_ih_, lstm_bias_hh_;
-    size_t output_conv_weight_, output_conv_bias_;
-
-    std::vector<float> h_state_;
-    std::vector<float> c_state_;
-    std::vector<float> context_;
-};
-
 class SileroVADModel : public Model {
 public:
+    static constexpr size_t CONTEXT_SIZE = 64;
+    static constexpr size_t CHUNK_SIZE = 512;
+    static constexpr size_t REFLECT_PAD_SIZE = 64;
+    static constexpr size_t HIDDEN_SIZE = 128;
+    static constexpr size_t GATE_SIZE = 512;
+
     SileroVADModel();
     explicit SileroVADModel(const Config& config);
     ~SileroVADModel() override;
@@ -893,8 +859,6 @@ public:
 
     float process_chunk(const std::vector<float>& audio_chunk);
     void reset_states();
-
-    SileroVAD* get_vad();
 
 protected:
     size_t build_attention(CactusGraph*, size_t, uint32_t, ComputeBackend, bool, size_t) override {
@@ -918,7 +882,42 @@ protected:
     void load_weights_to_graph(CactusGraph* gb) override;
 
 private:
-    std::unique_ptr<SileroVAD> vad_;
+    void build_graph();
+
+    struct VADGraphNodes {
+        size_t input;
+        size_t h_prev;
+        size_t c_prev;
+        size_t h_new;
+        size_t c_new;
+        size_t output;
+        size_t lstm_output;
+        size_t encoder_output;
+    } graph_nodes_;
+
+    struct VADWeightNodes {
+        size_t stft_basis;
+        struct EncoderBlock {
+            size_t conv_weight;
+            size_t conv_bias;
+        };
+        std::vector<EncoderBlock> encoder_blocks;
+        size_t lstm_weight_ih;
+        size_t lstm_weight_hh;
+        size_t lstm_bias_ih;
+        size_t lstm_bias_hh;
+        size_t output_conv_weight;
+        size_t output_conv_bias;
+    } weight_nodes_;
+
+    struct VADState {
+        std::vector<__fp16> h;
+        std::vector<__fp16> c;
+        std::vector<float> context;
+    } state_;
+
+    CactusGraph graph_;
+    std::string weights_path_;
 };
 
 }

@@ -942,8 +942,8 @@ static bool test_vad_process() {
 
     cactus_model_t model = cactus_init(vad_model_path, nullptr, false);
     if (!model) {
-        std::cout << "⊘ SKIP │ Failed to init VAD model\n";
-        return true;
+        std::cerr << "[✗] Failed to initialize VAD model\n";
+        return false;
     }
 
     std::string audio_path = std::string(g_assets_path) + "/test.wav";
@@ -951,14 +951,14 @@ static bool test_vad_process() {
     const char* vad_options = R"({"threshold": 0.5})";
 
     Timer t;
-    int result = cactus_vad(model, audio_path.c_str(), response, sizeof(response), vad_options, nullptr, 0);
+    int num_segments = cactus_vad(model, audio_path.c_str(), response, sizeof(response), vad_options, nullptr, 0);
     double elapsed = t.elapsed_ms();
 
     cactus_destroy(model);
 
-    if (result <= 0) {
-        std::cout << "⊘ SKIP │ VAD processing failed\n";
-        return true;
+    if (num_segments < 0) {
+        std::cerr << "[✗] VAD processing failed\n";
+        return false;
     }
 
     std::string response_str(response);
@@ -1001,13 +1001,14 @@ static bool test_vad_process() {
     for (size_t i = 0; i < segments.size(); ++i) {
         float start_sec = segments[i].first / 16000.0f;
         float end_sec = segments[i].second / 16000.0f;
-        std::cout << "  ├─ Segment " << (i + 1) << ": "
+        const char* prefix = (i == segments.size() - 1) ? "└─" : "├─";
+        std::cout << prefix << " Segment " << (i + 1) << ": "
                   << std::fixed << std::setprecision(2) << start_sec << "s - "
                   << std::setprecision(2) << end_sec << "s ("
-                  << std::setprecision(2) << (end_sec - start_sec) << "s)\n";
+                  << std::setprecision(2) << (end_sec - start_sec) << "s)" << std::endl;
     }
 
-    return result == 0 && !segments.empty();
+    return num_segments > 0 && segments.size() == static_cast<size_t>(num_segments);
 }
 
 static bool test_pcm_transcription() {
