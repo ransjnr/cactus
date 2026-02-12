@@ -52,10 +52,9 @@ void SileroVAD::load_weights() {
 void SileroVAD::build_graph() {
     const size_t context_size = 64;
     const size_t chunk_size = 512;
-    const size_t right_pad = 64;
-    const size_t padded_size = context_size + chunk_size + right_pad;
+    const size_t input_size = context_size + chunk_size;
 
-    input_node_ = graph_.input({1, 1, padded_size}, Precision::FP16);
+    input_node_ = graph_.input({1, 1, input_size}, Precision::FP16);
     h_prev_node_ = graph_.input({1, 128}, Precision::FP16);
     c_prev_node_ = graph_.input({1, 128}, Precision::FP16);
 
@@ -122,12 +121,10 @@ float SileroVAD::process_chunk(const float* audio, size_t samples) {
 
     const size_t context_size = 64;
     const size_t chunk_size = 512;
-    const size_t right_pad = 64;
-    const size_t total_size = context_size + chunk_size;
-    const size_t padded_size = total_size + right_pad;
+    const size_t input_size = context_size + chunk_size;
 
-    std::vector<__fp16> input_fp16(padded_size);
-    std::vector<float> input_with_context(total_size);
+    std::vector<__fp16> input_fp16(input_size);
+    std::vector<float> input_with_context(input_size);
 
     for (size_t i = 0; i < context_size; i++) {
         input_with_context[i] = context_[i];
@@ -136,12 +133,8 @@ float SileroVAD::process_chunk(const float* audio, size_t samples) {
         input_with_context[context_size + i] = audio[i];
     }
 
-    for (size_t i = 0; i < total_size; i++) {
+    for (size_t i = 0; i < input_size; i++) {
         input_fp16[i] = static_cast<__fp16>(input_with_context[i]);
-    }
-
-    for (size_t i = 0; i < right_pad; i++) {
-        input_fp16[total_size + i] = static_cast<__fp16>(input_with_context[total_size - 2 - i]);
     }
 
     std::vector<__fp16> h_fp16(128), c_fp16(128);
@@ -169,7 +162,7 @@ float SileroVAD::process_chunk(const float* audio, size_t samples) {
     }
 
     for (size_t i = 0; i < context_size; i++) {
-        context_[i] = audio[chunk_size - context_size + i];
+        context_[i] = input_with_context[input_size - context_size + i];
     }
 
     return static_cast<float>(vad_score[0]);

@@ -16,6 +16,8 @@ struct VADOptions {
     float max_speech_duration_s = std::numeric_limits<float>::infinity();
     int min_silence_duration_ms = 100;
     int speech_pad_ms = 30;
+    int min_silence_at_max_speech = 98;
+    bool use_max_poss_sil_at_max_speech = true;
     bool return_seconds = false;
     int sampling_rate = 16000;
     int window_size_samples = 512;
@@ -28,8 +30,22 @@ static void parse_vad_options(const std::string& json, VADOptions& opts) {
     if (pos != std::string::npos) {
         pos = json.find(':', pos) + 1;
         opts.threshold = std::stof(json.substr(pos));
-        opts.neg_threshold = std::max(opts.threshold - 0.15f, 0.01f);
     }
+
+    pos = json.find("\"min_silence_at_max_speech\"");
+    if (pos != std::string::npos) {
+        pos = json.find(':', pos) + 1;
+        opts.min_silence_at_max_speech = std::stoi(json.substr(pos));
+    }
+
+    pos = json.find("\"use_max_poss_sil_at_max_speech\"");
+    if (pos != std::string::npos) {
+        pos = json.find(':', pos) + 1;
+        std::string value = json.substr(pos, 5);
+        opts.use_max_poss_sil_at_max_speech = (value.find("true") != std::string::npos);
+    }
+
+    opts.neg_threshold = std::max(opts.threshold - 0.15f, 0.01f);
 }
 
 struct SpeechSegment {
@@ -74,13 +90,25 @@ static std::vector<SpeechSegment> get_speech_timestamps(
     std::vector<SpeechSegment> speeches;
     SpeechSegment current_speech = {0, 0};
     size_t temp_end = 0;
+    size_t prev_end = 0;
+    size_t next_start = 0;
+    std::vector<std::pair<size_t, size_t>> possible_ends;
+
+    const float min_silence_samples_at_max_speech = opts.sampling_rate * opts.min_silence_at_max_speech / 1000.0f;
 
     for (size_t i = 0; i < speech_probs.size(); ++i) {
         float speech_prob = speech_probs[i];
         size_t cur_sample = window_size_samples * i;
 
         if (speech_prob >= opts.threshold && temp_end) {
+            size_t sil_dur = cur_sample - temp_end;
+            if (sil_dur > min_silence_samples_at_max_speech) {
+                possible_ends.push_back({temp_end, sil_dur});
+            }
             temp_end = 0;
+            if (next_start < prev_end) {
+                next_start = cur_sample;
+            }
         }
 
         if (speech_prob >= opts.threshold && !triggered) {
@@ -90,19 +118,60 @@ static std::vector<SpeechSegment> get_speech_timestamps(
         }
 
         if (triggered && (cur_sample - current_speech.start > max_speech_samples)) {
-            current_speech.end = cur_sample;
-            speeches.push_back(current_speech);
-            current_speech = {0, 0};
-            triggered = false;
-            temp_end = 0;
-            continue;
+            if (opts.use_max_poss_sil_at_max_speech && !possible_ends.empty()) {
+                auto max_silence = std::max_element(possible_ends.begin(), possible_ends.end(),
+                    [](const std::pair<size_t, size_t>& a, const std::pair<size_t, size_t>& b) {
+                        return a.second < b.second;
+                    });
+                prev_end = max_silence->first;
+                size_t dur = max_silence->second;
+                current_speech.end = prev_end;
+                speeches.push_back(current_speech);
+                current_speech = {0, 0};
+                next_start = prev_end + dur;
+
+                if (next_start < prev_end + cur_sample) {
+                    current_speech.start = next_start;
+                } else {
+                    triggered = false;
+                }
+                prev_end = next_start = temp_end = 0;
+                possible_ends.clear();
+            } else {
+                if (prev_end) {
+                    current_speech.end = prev_end;
+                    speeches.push_back(current_speech);
+                    current_speech = {0, 0};
+                    if (next_start < prev_end) {
+                        triggered = false;
+                    } else {
+                        current_speech.start = next_start;
+                    }
+                    prev_end = next_start = temp_end = 0;
+                    possible_ends.clear();
+                } else {
+                    current_speech.end = cur_sample;
+                    speeches.push_back(current_speech);
+                    current_speech = {0, 0};
+                    prev_end = next_start = temp_end = 0;
+                    triggered = false;
+                    possible_ends.clear();
+                    continue;
+                }
+            }
         }
 
         if (speech_prob < opts.neg_threshold && triggered) {
             if (!temp_end) {
                 temp_end = cur_sample;
             }
-            if (cur_sample - temp_end < min_silence_samples) {
+            size_t sil_dur_now = cur_sample - temp_end;
+
+            if (!opts.use_max_poss_sil_at_max_speech && sil_dur_now > min_silence_samples_at_max_speech) {
+                prev_end = temp_end;
+            }
+
+            if (sil_dur_now < min_silence_samples) {
                 continue;
             } else {
                 current_speech.end = temp_end;
@@ -110,8 +179,9 @@ static std::vector<SpeechSegment> get_speech_timestamps(
                     speeches.push_back(current_speech);
                 }
                 current_speech = {0, 0};
-                temp_end = 0;
+                prev_end = next_start = temp_end = 0;
                 triggered = false;
+                possible_ends.clear();
                 continue;
             }
         }
@@ -124,19 +194,25 @@ static std::vector<SpeechSegment> get_speech_timestamps(
 
     for (size_t i = 0; i < speeches.size(); ++i) {
         if (i == 0) {
-            speeches[i].start = std::max(0.0f, static_cast<float>(speeches[i].start) - speech_pad_samples);
+            speeches[i].start = speeches[i].start > static_cast<size_t>(speech_pad_samples)
+                ? speeches[i].start - static_cast<size_t>(speech_pad_samples)
+                : 0;
         }
         if (i != speeches.size() - 1) {
             size_t silence_duration = speeches[i + 1].start - speeches[i].end;
-            if (silence_duration < 2 * speech_pad_samples) {
+            if (silence_duration < 2 * static_cast<size_t>(speech_pad_samples)) {
                 speeches[i].end += silence_duration / 2;
-                speeches[i + 1].start = std::max(0.0f, static_cast<float>(speeches[i + 1].start) - static_cast<float>(silence_duration) / 2.0f);
+                speeches[i + 1].start = speeches[i + 1].start > silence_duration / 2
+                    ? speeches[i + 1].start - silence_duration / 2
+                    : 0;
             } else {
-                speeches[i].end = std::min(audio_length_samples, static_cast<size_t>(speeches[i].end + speech_pad_samples));
-                speeches[i + 1].start = std::max(0.0f, static_cast<float>(speeches[i + 1].start) - speech_pad_samples);
+                speeches[i].end = std::min(audio_length_samples, speeches[i].end + static_cast<size_t>(speech_pad_samples));
+                speeches[i + 1].start = speeches[i + 1].start > static_cast<size_t>(speech_pad_samples)
+                    ? speeches[i + 1].start - static_cast<size_t>(speech_pad_samples)
+                    : 0;
             }
         } else {
-            speeches[i].end = std::min(audio_length_samples, static_cast<size_t>(speeches[i].end + speech_pad_samples));
+            speeches[i].end = std::min(audio_length_samples, speeches[i].end + static_cast<size_t>(speech_pad_samples));
         }
     }
 
@@ -145,7 +221,7 @@ static std::vector<SpeechSegment> get_speech_timestamps(
 
 extern "C" {
 
-int cactus_vad_process(
+int cactus_vad(
     cactus_model_t model,
     const char* audio_file_path,
     char* response_buffer,
@@ -247,7 +323,7 @@ int cactus_vad_process(
         }
 
         std::strcpy(response_buffer, response.c_str());
-        return 0;
+        return static_cast<int>(segments.size());
 
     } catch (const std::exception& e) {
         last_error_message = "Exception during VAD processing: " + std::string(e.what());

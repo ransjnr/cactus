@@ -13,6 +13,7 @@ using namespace EngineTestUtils;
 
 const char* g_model_path = std::getenv("CACTUS_TEST_MODEL");
 const char* g_transcribe_model_path = std::getenv("CACTUS_TEST_TRANSCRIBE_MODEL");
+const char* g_vad_model_path = std::getenv("CACTUS_TEST_VAD_MODEL");
 const char* g_assets_path = std::getenv("CACTUS_TEST_ASSETS");
 
 static const char* get_transcribe_prompt() {
@@ -950,12 +951,12 @@ static bool test_vad_process() {
     const char* vad_options = R"({"threshold": 0.5})";
 
     Timer t;
-    int result = cactus_vad_process(model, audio_path.c_str(), response, sizeof(response), vad_options, nullptr, 0);
+    int result = cactus_vad(model, audio_path.c_str(), response, sizeof(response), vad_options, nullptr, 0);
     double elapsed = t.elapsed_ms();
 
     cactus_destroy(model);
 
-    if (result != 0) {
+    if (result <= 0) {
         std::cout << "⊘ SKIP │ VAD processing failed\n";
         return true;
     }
