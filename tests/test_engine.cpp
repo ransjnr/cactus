@@ -726,7 +726,7 @@ bool run_whisper_test(const char* title, const char* options_json, Predicate che
 }
 
 static bool test_transcription() {
-    return run_whisper_test("TRANSCRIPTION", R"({"max_tokens": 100})",
+    return run_whisper_test("TRANSCRIPTION", R"({"max_tokens": 256})",
         [](int rc, const Metrics& m) { return rc > 0 && m.completion_tokens >= 8; });
 }
 
@@ -1074,7 +1074,7 @@ static bool test_pcm_transcription() {
                     g_whisper_prompt,
                     response,
                     sizeof(response),
-                    R"({"max_tokens": 100})",
+                    nullptr,
                     stream_callback,
                     &stream,
                     reinterpret_cast<const uint8_t*>(pcm_samples.data()),

@@ -857,8 +857,27 @@ public:
     bool init(const std::string& model_folder, size_t context_size = 0,
               const std::string& system_prompt = "", bool do_warmup = false) override;
 
+    struct SpeechTimestamp {
+        size_t start;
+        size_t end;
+    };
+
+    struct SpeechTimestampsOptions {
+        float threshold = 0.5f;
+        float neg_threshold = 0.0f;
+        int min_speech_duration_ms = 250;
+        float max_speech_duration_s = std::numeric_limits<float>::infinity();
+        int min_silence_duration_ms = 100;
+        int speech_pad_ms = 30;
+        int window_size_samples = 512;
+        int min_silence_at_max_speech = 98;
+        bool use_max_poss_sil_at_max_speech = true;
+        int sampling_rate = 16000;
+    };
+
     float process_chunk(const std::vector<float>& audio_chunk);
     void reset_states();
+    std::vector<SpeechTimestamp> get_speech_timestamps(const std::vector<float>& audio, const SpeechTimestampsOptions& options);
 
 protected:
     size_t build_attention(CactusGraph*, size_t, uint32_t, ComputeBackend, bool, size_t) override {

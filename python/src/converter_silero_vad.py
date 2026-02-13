@@ -77,7 +77,8 @@ def convert_silero_vad_weights(model, output_dir, precision="FP16", args=None):
         precision=precision,
     )
 
-    with open(output_dir / "config.txt", "w") as f:
+    config_path = output_dir / "config.txt"
+    with open(config_path, "w") as f:
         for key, value in config.items():
             f.write(f"{key}={value}\n")
 

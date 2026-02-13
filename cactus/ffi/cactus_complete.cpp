@@ -203,9 +203,20 @@ int cactus_complete(
         float temperature, top_p, confidence_threshold;
         size_t top_k, max_tokens, tool_rag_top_k;
         std::vector<std::string> stop_sequences;
-        bool force_tools, include_stop_sequences;
-        parse_options_json(options_json ? options_json : "",
-                          temperature, top_p, top_k, max_tokens, stop_sequences, force_tools, tool_rag_top_k, confidence_threshold, include_stop_sequences);
+        bool force_tools, include_stop_sequences, use_vad;
+        parse_options_json(
+            options_json ? options_json : "",
+            temperature,
+            top_p,
+            top_k,
+            max_tokens,
+            stop_sequences,
+            force_tools,
+            tool_rag_top_k,
+            confidence_threshold,
+            include_stop_sequences,
+            use_vad
+        );
 
         std::vector<ToolFunction> tools;
         if (tools_json && strlen(tools_json) > 0)

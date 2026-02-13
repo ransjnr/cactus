@@ -164,6 +164,170 @@ void SileroVADModel::reset_states() {
     state_.context.assign(CONTEXT_SIZE, 0.0f);
 }
 
+std::vector<SileroVADModel::SpeechTimestamp> SileroVADModel::get_speech_timestamps(const std::vector<float>& audio, const SpeechTimestampsOptions& options) {
+    const size_t audio_length_samples = audio.size();
+    const size_t window_size_samples = options.window_size_samples;
+    const float min_speech_samples = options.sampling_rate * options.min_speech_duration_ms / 1000.0f;
+    const float speech_pad_samples = options.sampling_rate * options.speech_pad_ms / 1000.0f;
+    const float max_speech_samples = options.sampling_rate * options.max_speech_duration_s - window_size_samples - 2 * speech_pad_samples;
+    const float min_silence_samples = options.sampling_rate * options.min_silence_duration_ms / 1000.0f;
+    const float neg_threshold = (options.neg_threshold == 0.0f)
+        ? std::max(options.threshold - 0.15f, 0.01f)
+        : options.neg_threshold;
+    reset_states();
+
+    std::vector<float> speech_probs;
+    speech_probs.reserve(audio_length_samples / window_size_samples + 1);
+
+    for (size_t current_start = 0; current_start < audio_length_samples; current_start += window_size_samples) {
+        std::vector<float> chunk;
+        chunk.reserve(window_size_samples);
+
+        for (size_t i = current_start; i < current_start + window_size_samples && i < audio_length_samples; ++i) {
+            chunk.push_back(audio[i]);
+        }
+
+        while (chunk.size() < window_size_samples) {
+            chunk.push_back(0.0f);
+        }
+
+        float speech_prob = process_chunk(chunk);
+        speech_probs.push_back(speech_prob);
+    }
+
+    bool triggered = false;
+    std::vector<SpeechTimestamp> speeches;
+    SpeechTimestamp current_speech = {0, 0};
+    size_t temp_end = 0;
+    size_t prev_end = 0;
+    size_t next_start = 0;
+    std::vector<std::pair<size_t, size_t>> possible_ends;
+
+    const float min_silence_samples_at_max_speech = options.sampling_rate * options.min_silence_at_max_speech / 1000.0f;
+
+    for (size_t i = 0; i < speech_probs.size(); ++i) {
+        float speech_prob = speech_probs[i];
+        size_t cur_sample = window_size_samples * i;
+
+        if (speech_prob >= options.threshold && temp_end) {
+            size_t sil_dur = cur_sample - temp_end;
+            if (sil_dur > min_silence_samples_at_max_speech) {
+                possible_ends.push_back({temp_end, sil_dur});
+            }
+            temp_end = 0;
+            if (next_start < prev_end) {
+                next_start = cur_sample;
+            }
+        }
+
+        if (speech_prob >= options.threshold && !triggered) {
+            triggered = true;
+            current_speech.start = cur_sample;
+            continue;
+        }
+
+        if (triggered && (cur_sample - current_speech.start > max_speech_samples)) {
+            if (options.use_max_poss_sil_at_max_speech && !possible_ends.empty()) {
+                auto max_silence = std::max_element(possible_ends.begin(), possible_ends.end(),
+                    [](const std::pair<size_t, size_t>& a, const std::pair<size_t, size_t>& b) {
+                        return a.second < b.second;
+                    });
+                prev_end = max_silence->first;
+                size_t dur = max_silence->second;
+                current_speech.end = prev_end;
+                speeches.push_back(current_speech);
+                current_speech = {0, 0};
+                next_start = prev_end + dur;
+
+                if (next_start < prev_end + cur_sample) {
+                    current_speech.start = next_start;
+                } else {
+                    triggered = false;
+                }
+                prev_end = next_start = temp_end = 0;
+                possible_ends.clear();
+            } else {
+                if (prev_end) {
+                    current_speech.end = prev_end;
+                    speeches.push_back(current_speech);
+                    current_speech = {0, 0};
+                    if (next_start < prev_end) {
+                        triggered = false;
+                    } else {
+                        current_speech.start = next_start;
+                    }
+                    prev_end = next_start = temp_end = 0;
+                    possible_ends.clear();
+                } else {
+                    current_speech.end = cur_sample;
+                    speeches.push_back(current_speech);
+                    current_speech = {0, 0};
+                    prev_end = next_start = temp_end = 0;
+                    triggered = false;
+                    possible_ends.clear();
+                    continue;
+                }
+            }
+        }
+
+        if (speech_prob < neg_threshold && triggered) {
+            if (!temp_end) {
+                temp_end = cur_sample;
+            }
+            size_t sil_dur_now = cur_sample - temp_end;
+
+            if (!options.use_max_poss_sil_at_max_speech && sil_dur_now > min_silence_samples_at_max_speech) {
+                prev_end = temp_end;
+            }
+
+            if (sil_dur_now < min_silence_samples) {
+                continue;
+            } else {
+                current_speech.end = temp_end;
+                if ((current_speech.end - current_speech.start) > min_speech_samples) {
+                    speeches.push_back(current_speech);
+                }
+                current_speech = {0, 0};
+                prev_end = next_start = temp_end = 0;
+                triggered = false;
+                possible_ends.clear();
+                continue;
+            }
+        }
+    }
+
+    if (triggered && (audio_length_samples - current_speech.start) > min_speech_samples) {
+        current_speech.end = audio_length_samples;
+        speeches.push_back(current_speech);
+    }
+
+    for (size_t i = 0; i < speeches.size(); ++i) {
+        if (i == 0) {
+            speeches[i].start = speeches[i].start > static_cast<size_t>(speech_pad_samples)
+                ? speeches[i].start - static_cast<size_t>(speech_pad_samples)
+                : 0;
+        }
+        if (i != speeches.size() - 1) {
+            size_t silence_duration = speeches[i + 1].start - speeches[i].end;
+            if (silence_duration < 2 * static_cast<size_t>(speech_pad_samples)) {
+                speeches[i].end += silence_duration / 2;
+                speeches[i + 1].start = speeches[i + 1].start > silence_duration / 2
+                    ? speeches[i + 1].start - silence_duration / 2
+                    : 0;
+            } else {
+                speeches[i].end = std::min(audio_length_samples, speeches[i].end + static_cast<size_t>(speech_pad_samples));
+                speeches[i + 1].start = speeches[i + 1].start > static_cast<size_t>(speech_pad_samples)
+                    ? speeches[i + 1].start - static_cast<size_t>(speech_pad_samples)
+                    : 0;
+            }
+        } else {
+            speeches[i].end = std::min(audio_length_samples, speeches[i].end + static_cast<size_t>(speech_pad_samples));
+        }
+    }
+
+    return speeches;
+}
+
 size_t SileroVADModel::forward(const std::vector<float>&, const std::vector<uint32_t>&, bool) {
     return 0;
 }
