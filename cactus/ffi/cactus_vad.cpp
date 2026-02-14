@@ -2,9 +2,8 @@
 #include "cactus_utils.h"
 #include "../models/model.h"
 #include "../../libs/audio/wav.h"
-#include <vector>
-#include <sstream>
-#include <algorithm>
+#include <chrono>
+#include <cstring>
 
 using namespace cactus::engine;
 using namespace cactus::ffi;
@@ -133,6 +132,7 @@ int cactus_vad(
     }
 
     try {
+        auto start_time = std::chrono::high_resolution_clock::now();
         auto* handle = static_cast<CactusModelHandle*>(model);
         auto* vad_model = dynamic_cast<SileroVADModel*>(handle->model.get());
 
@@ -170,10 +170,8 @@ int cactus_vad(
 
         auto segments = vad_model->get_speech_timestamps(audio, options);
 
-        float total_speech_duration = 0.0f;
-        for (const auto& seg : segments) {
-            total_speech_duration += (seg.end - seg.start);
-        }
+        auto end_time = std::chrono::high_resolution_clock::now();
+        double total_time_ms = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count() / 1000.0;
 
         std::ostringstream json;
         json << "{";
@@ -190,10 +188,8 @@ int cactus_vad(
         }
 
         json << "],";
-        json << "\"speech_detected\":" << (!segments.empty() ? "true" : "false") << ",";
-        json << "\"total_speech_samples\":" << static_cast<size_t>(total_speech_duration) << ",";
-        json << "\"total_samples\":" << audio.size();
-
+        json << "\"total_time_ms\":" << std::fixed << std::setprecision(2) << total_time_ms << ",";
+        json << "\"ram_usage_mb\":" << std::fixed << std::setprecision(2) << get_ram_usage_mb();
         json << "}";
 
         std::string response = json.str();
