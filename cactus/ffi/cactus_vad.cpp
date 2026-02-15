@@ -134,14 +134,7 @@ int cactus_vad(
     try {
         auto start_time = std::chrono::high_resolution_clock::now();
         auto* handle = static_cast<CactusModelHandle*>(model);
-        auto* vad_model = dynamic_cast<SileroVADModel*>(handle->model.get());
-
-        if (!vad_model) {
-            last_error_message = "Model is not a VAD model";
-            CACTUS_LOG_ERROR("vad", last_error_message);
-            handle_error_response(last_error_message, response_buffer, buffer_size);
-            return -1;
-        }
+        auto* vad_model = static_cast<SileroVADModel*>(handle->model.get());
 
         SileroVADModel::SpeechTimestampsOptions options = parse_speech_timestamps_options(options_json ? options_json : "");
 
