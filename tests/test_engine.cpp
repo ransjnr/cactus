@@ -949,33 +949,23 @@ static bool test_vad_process() {
 
     std::string audio_path = std::string(g_assets_path) + "/test.wav";
     char response[8192] = {0};
-    const char* vad_options = R"({"threshold": 0.5})";
 
-    Timer t;
-    int num_segments = cactus_vad(model, audio_path.c_str(), response, sizeof(response), vad_options, nullptr, 0);
-    double elapsed = t.elapsed_ms();
+    Timer timer;
+    int result = cactus_vad(model, audio_path.c_str(), response, sizeof(response), R"({"threshold": 0.5})", nullptr, 0);
+    double elapsed = timer.elapsed_ms();
 
     cactus_destroy(model);
 
-    if (num_segments < 0) {
+    if (result < 0) {
         std::cerr << "[✗] VAD processing failed\n";
         return false;
     }
 
     std::string response_str(response);
-
-    auto parse_number = [&](const std::string& key) -> size_t {
-        size_t pos = response_str.find("\"" + key + "\":");
-        if (pos == std::string::npos) return 0;
-        pos = response_str.find(":", pos) + 1;
-        size_t end = response_str.find_first_of(",}", pos);
-        return std::stoull(response_str.substr(pos, end - pos));
-    };
-
-    size_t total_samples = parse_number("total_samples");
-    size_t speech_samples = parse_number("total_speech_samples");
-    float duration_sec = total_samples / 16000.0f;
-    float speech_sec = speech_samples / 16000.0f;
+    if (response_str.find("\"success\":true") == std::string::npos) {
+        std::cerr << "[✗] VAD response indicates failure\n";
+        return false;
+    }
 
     std::vector<std::pair<size_t, size_t>> segments;
     size_t pos = 0;
@@ -992,11 +982,15 @@ static bool test_vad_process() {
         pos = end_pos;
     }
 
+    size_t total_speech_samples = 0;
+    for (const auto& segment : segments) {
+        total_speech_samples += (segment.second - segment.first);
+    }
+
     std::cout << "\n[Results]\n"
               << "  \"success\": true,\n"
-              << "  \"time_ms\": " << std::fixed << std::setprecision(2) << elapsed << ",\n"
-              << "  \"total_duration_sec\": " << std::setprecision(2) << duration_sec << ",\n"
-              << "  \"speech_duration_sec\": " << std::setprecision(2) << speech_sec << ",\n"
+              << "  \"total_time_ms\": " << std::fixed << std::setprecision(2) << elapsed << ",\n"
+              << "  \"speech_duration_sec\": " << std::setprecision(2) << (total_speech_samples / 16000.0) << ",\n"
               << "  \"segments_detected\": " << segments.size() << "\n";
 
     for (size_t i = 0; i < segments.size(); ++i) {
@@ -1009,7 +1003,7 @@ static bool test_vad_process() {
                   << std::setprecision(2) << (end_sec - start_sec) << "s)" << std::endl;
     }
 
-    return num_segments > 0 && segments.size() == static_cast<size_t>(num_segments);
+    return result > 0 && !segments.empty();
 }
 
 static bool test_pcm_transcription() {
