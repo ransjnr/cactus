@@ -533,6 +533,9 @@ def cmd_run(args):
     """Download model if needed and start interactive chat."""
     model_id = args.model_id
 
+    if getattr(args, 'no_cloud_tele', False):
+        os.environ["CACTUS_NO_CLOUD_TELE"] = "1"
+
     lib_path = PROJECT_ROOT / "cactus" / "build" / "libcactus.a"
     if not lib_path.exists():
         print_color(RED, "Error: Cactus library not built. Run 'cactus build' first.")
@@ -568,6 +571,9 @@ def cmd_transcribe(args):
     """Download ASR model if needed and start transcription."""
     model_id = getattr(args, 'model_id', DEFAULT_ASR_MODEL_ID)
     audio_file = getattr(args, 'audio_file', None)
+
+    if getattr(args, 'no_cloud_tele', False):
+        os.environ["CACTUS_NO_CLOUD_TELE"] = "1"
 
     audio_extensions = ('.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac')
     if model_id and model_id.lower().endswith(audio_extensions):
@@ -706,6 +712,8 @@ def cmd_eval(args):
     print(" ".join(cmd))
 
     env = os.environ.copy()
+    if getattr(args, 'no_cloud_tele', False):
+        env["CACTUS_NO_CLOUD_TELE"] = "1"
     if mode == "vlm":
         ffi_dir = str(repo_root / "cactus" / "tools" / "src")
         existing = env.get("PYTHONPATH", "")
@@ -805,7 +813,11 @@ def cmd_test(args):
     if args.ios:
         cmd.append("--ios")
 
-    result = subprocess.run(cmd, cwd=PROJECT_ROOT / "tests")
+    env = os.environ.copy()
+    if getattr(args, 'no_cloud_tele', False):
+        env["CACTUS_NO_CLOUD_TELE"] = "1"
+
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT / "tests", env=env)
     return result.returncode
 
 
@@ -1134,6 +1146,8 @@ def create_parser():
                             help='Quantization precision (default: INT8)')
     run_parser.add_argument('--cache-dir', help='Cache directory for HuggingFace models')
     run_parser.add_argument('--token', help='HuggingFace API token')
+    run_parser.add_argument('--no-cloud-tele', action='store_true',
+                            help='Disable cloud telemetry (write to cache only)')
 
     transcribe_parser = subparsers.add_parser('transcribe', help='Download ASR model and run transcription')
     transcribe_parser.add_argument('model_id', nargs='?', default=DEFAULT_ASR_MODEL_ID,
@@ -1144,6 +1158,8 @@ def create_parser():
                                    help='Quantization precision (default: INT8)')
     transcribe_parser.add_argument('--cache-dir', help='Cache directory for HuggingFace models')
     transcribe_parser.add_argument('--token', help='HuggingFace API token')
+    transcribe_parser.add_argument('--no-cloud-tele', action='store_true',
+                                   help='Disable cloud telemetry (write to cache only)')
 
     eval_parser = subparsers.add_parser('eval', help='Run evaluation scripts outside the cactus submodule')
     eval_parser.add_argument('model_id', nargs='?', default=DEFAULT_MODEL_ID,
@@ -1157,6 +1173,8 @@ def create_parser():
     eval_parser.add_argument('--stt', action='store_true', help='Run speech-to-text evals')
     eval_parser.add_argument('--llm', action='store_true', help='Run LLM evals')
     eval_parser.add_argument('--embed', action='store_true', help='Run embedding evals')
+    eval_parser.add_argument('--no-cloud-tele', action='store_true',
+                             help='Disable cloud telemetry (write to cache only)')
 
     test_parser = subparsers.add_parser('test', help='Run the test suite')
     test_parser.add_argument('--model', default='LiquidAI/LFM2-VL-450M',
@@ -1176,6 +1194,8 @@ def create_parser():
                              help='Run tests on Android')
     test_parser.add_argument('--ios', action='store_true',
                              help='Run tests on iOS')
+    test_parser.add_argument('--no-cloud-tele', action='store_true',
+                             help='Disable cloud telemetry (write to cache only)')
 
     clean_parser = subparsers.add_parser('clean', help='Remove all build artifacts')
 

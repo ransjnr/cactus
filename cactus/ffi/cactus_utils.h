@@ -323,7 +323,8 @@ inline void parse_options_json(const std::string& json,
                                size_t& tool_rag_top_k,
                                float& confidence_threshold,
                                bool& include_stop_sequences,
-                               bool& use_vad) {
+                               bool& use_vad,
+                               bool& telemetry_enabled) {
     temperature = 0.0f;
     top_p = 0.0f;
     top_k = 0;
@@ -333,6 +334,7 @@ inline void parse_options_json(const std::string& json,
     confidence_threshold = 0.7f;
     include_stop_sequences = false;
     use_vad = true;
+    telemetry_enabled = true;
     stop_sequences.clear();
 
     if (json.empty()) return;
@@ -392,6 +394,13 @@ inline void parse_options_json(const std::string& json,
         pos = json.find(':', pos) + 1;
         while (pos < json.length() && std::isspace(json[pos])) pos++;
         use_vad = (json.substr(pos, 4) == "true");
+    }
+
+    pos = json.find("\"telemetry_enabled\"");
+    if (pos != std::string::npos) {
+        pos = json.find(':', pos) + 1;
+        while (pos < json.length() && std::isspace(json[pos])) pos++;
+        telemetry_enabled = (json.substr(pos, 4) == "true");
     }
 
     pos = json.find("\"stop_sequences\"");
@@ -684,6 +693,18 @@ inline std::string construct_cloud_handoff_json(float confidence,
     json << "\"total_tokens\":" << prompt_tokens;
     json << "}";
     return json.str();
+}
+
+inline std::string serialize_function_calls(const std::vector<std::string>& calls) {
+    if (calls.empty()) return "[]";
+    std::ostringstream oss;
+    oss << "[";
+    for (size_t i = 0; i < calls.size(); ++i) {
+        if (i > 0) oss << ",";
+        oss << calls[i];
+    }
+    oss << "]";
+    return oss.str();
 }
 
 } // namespace ffi

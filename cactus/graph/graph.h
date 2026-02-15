@@ -440,7 +440,6 @@ public:
     size_t gather(size_t embeddings, size_t indices);
     size_t mmap_embeddings(const std::string& filename);
     size_t mmap_weights(const std::string& filename);
-    size_t load_weights(const std::string& filename);
     void set_grouped_scales(size_t node_id, size_t group_size, size_t num_groups, void* scales_ptr);
     void set_interleaved(size_t node_id, bool interleaved, size_t original_N);
 
@@ -466,7 +465,7 @@ public:
     size_t attention_int8_hybrid(size_t query, size_t key_new, size_t value_new, float scale, size_t position_offset,
                                  const int8_t* cached_keys, const int8_t* cached_values,
                                  const float* k_scales, const float* v_scales,
-                                 size_t cache_len, size_t num_kv_heads, size_t head_dim);
+                                 size_t cache_len, size_t num_kv_heads, size_t head_dim, size_t window_size = 0);
 
     size_t conv1d_causal(size_t input, size_t weight, size_t kernel_size, size_t dilation = 1);
     size_t conv1d_k3(size_t input, size_t weight, size_t stride);
@@ -532,7 +531,6 @@ namespace GraphFile {
     };
     
     void save_node(CactusGraph& graph, size_t node_id, const std::string& filename);
-    LoadedNode load_into_graph(CactusGraph& graph, const std::string& filename);
     
     class MappedFile {
     public:
@@ -561,8 +559,6 @@ namespace GraphFile {
         template<typename T>
         const T* typed_data() const;
 
-        LoadedNode load_into_graph(CactusGraph& graph) const;
-
         void release_pages();
         void prefetch_pages();
 
@@ -588,8 +584,6 @@ namespace GraphFile {
         void apply_madvise_hints();
         void unpack_int4_data();
     };
-
-    MappedFile mmap_load(const std::string& filename);
 }
 
 #endif 
