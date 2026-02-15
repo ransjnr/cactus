@@ -138,6 +138,25 @@ int cactus_transcribe(
                 );
             }
             audio_buffer = std::move(speech_audio);
+
+            if (audio_buffer.empty()) {
+                CACTUS_LOG_DEBUG("transcribe", "VAD detected only silence, returning empty transcription");
+
+                auto vad_end_time = std::chrono::high_resolution_clock::now();
+                double vad_total_time_ms = std::chrono::duration_cast<std::chrono::microseconds>(vad_end_time - start_time).count() / 1000.0;
+
+                std::string json = construct_response_json("", {}, 0.0, vad_total_time_ms, 0.0, 0.0, 0, 0, 1.0f);
+
+                if (json.size() >= buffer_size) {
+                    handle_error_response("Response buffer too small", response_buffer, buffer_size);
+                    cactus::telemetry::recordTranscription(handle->model_name.c_str(), false, 0.0, 0.0, 0.0, 0, "Response buffer too small");
+                    return -1;
+                }
+
+                cactus::telemetry::recordTranscription(handle->model_name.c_str(), true, 0.0, 0.0, vad_total_time_ms, 0, "");
+                std::strcpy(response_buffer, json.c_str());
+                return static_cast<int>(json.size());
+            }
         }
 
         if (!is_moonshine) {
