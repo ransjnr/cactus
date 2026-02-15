@@ -194,7 +194,7 @@ int cactus_vad(
         }
 
         std::strcpy(response_buffer, response.c_str());
-        return static_cast<int>(segments.size());
+        return static_cast<int>(response.length());
 
     } catch (const std::exception& e) {
         last_error_message = "Exception during VAD processing: " + std::string(e.what());

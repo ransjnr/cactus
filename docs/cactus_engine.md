@@ -471,16 +471,30 @@ int cactus_vad(
 );
 ```
 
-**Returns:** Number of speech segments detected on success, negative value on error
+**Returns:** Size of JSON response string on success (positive value), -1 on error
+
+**Response JSON format:**
+```json
+{
+  "success": true,
+  "error": null,
+  "segments": [
+    {"start": 0, "end": 16000},
+    {"start": 32000, "end": 48000}
+  ],
+  "total_time_ms": 12.34,
+  "ram_usage_mb": 45.67
+}
+```
 
 **Example:**
 ```c
 cactus_model_t vad = cactus_init("../../weights/silero-vad", NULL);
 
 char response[4096];
-int num_segments = cactus_vad(vad, "audio.wav", response, sizeof(response),
-                               NULL, NULL, 0);
-if (num_segments > 0) {
+int result = cactus_vad(vad, "audio.wav", response, sizeof(response), NULL, NULL, 0);
+
+if (result > 0) {
     printf("Response: %s\n", response);
 }
 ```
