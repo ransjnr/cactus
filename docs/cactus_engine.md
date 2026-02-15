@@ -471,9 +471,9 @@ int cactus_vad(
 );
 ```
 
-**Returns:** Size of JSON response string on success (positive value), -1 on error
+**Returns:** Number of bytes written to response_buffer on success, negative value on error
 
-**Response JSON format:**
+**Response Format:**
 ```json
 {
   "success": true,

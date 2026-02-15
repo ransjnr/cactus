@@ -472,7 +472,9 @@ public:
     size_t conv1d_k7s3(size_t input, size_t weight, size_t bias);
     size_t conv1d(size_t input, size_t weight, size_t stride);
     size_t conv1d(size_t input, size_t weight, size_t bias, size_t stride);
-    
+
+    size_t lstm_cell(size_t input, size_t h_prev, size_t c_prev, size_t weight_ih, size_t weight_hh, size_t bias_ih, size_t bias_hh);
+
     size_t sample(size_t logits, float temperature = 0.6f, float top_p = 0.95f, size_t top_k = 20,
                   const std::unordered_map<uint32_t, float>& logit_bias = {});
     
@@ -502,8 +504,6 @@ public:
     size_t persistent(size_t source_node);
     bool is_populated(size_t persistent_node_id) const;
     void invalidate_persistent(size_t persistent_node_id);
-
-    size_t lstm_cell(size_t input, size_t h_prev, size_t c_prev, size_t weight_ih, size_t weight_hh, size_t bias_ih, size_t bias_hh);
 
     std::vector<std::unique_ptr<GraphNode>> nodes_;
     std::unordered_map<size_t, size_t> node_index_map_;
