@@ -33,6 +33,8 @@ def get_model_dir_name(model_id):
 
 def get_weights_dir(model_id):
     """Get the weights directory path for a model."""
+    if 'silero-vad' in model_id.lower():
+        return PROJECT_ROOT / "weights" / "silero-vad"
     model_dir = get_model_dir_name(model_id)
     return PROJECT_ROOT / "weights" / model_dir
 
@@ -162,6 +164,7 @@ def cmd_download(args):
 
     is_vlm = 'vl' in model_id.lower() or 'vlm' in model_id.lower()
     is_whisper = 'whisper' in model_id.lower()
+    is_vad = 'silero-vad' in model_id.lower()
 
     try:
         if is_vlm:
@@ -231,6 +234,27 @@ def cmd_download(args):
         elif is_whisper:
             tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=cache_dir, trust_remote_code=True, token=token)
             model = AutoModel.from_pretrained(model_id, cache_dir=cache_dir, trust_remote_code=True, token=token)
+
+        elif is_vad:
+            try:
+                import torchaudio
+            except ImportError:
+                print_color(RED, "Error: torchaudio is required for Silero-VAD")
+                print("Install with: pip install torchaudio")
+                return 1
+
+            from .converter_silero_vad import convert_silero_vad_weights
+
+            model, _ = torch.hub.load("snakers4/silero-vad", "silero_vad", force_reload=False)
+            convert_silero_vad_weights(model, weights_dir, precision, args)
+
+            del model
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            print_color(GREEN, f"Successfully downloaded and converted weights to {weights_dir}")
+            return 0
 
         else:
             tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=cache_dir, trust_remote_code=True, token=token)
@@ -776,7 +800,7 @@ def cmd_test(args):
     if getattr(args, 'large', False):
         args.model = 'LiquidAI/LFM2.5-VL-1.6B'
         args.transcribe_model = 'openai/whisper-small'
-        print_color(BLUE, f"Using large models: {args.model}, {args.transcribe_model}")
+        print_color(BLUE, f"Using large models: {args.model}, {args.transcribe_model}, {args.vad_model}")
 
     precision = getattr(args, 'precision', None)
     reconvert = getattr(args, 'reconvert', False)
@@ -812,6 +836,23 @@ def cmd_test(args):
         if download_result != 0:
             return download_result
 
+        vad_model_id = getattr(args, 'vad_model', 'silero-vad')
+        vad_weights_dir = get_weights_dir(vad_model_id)
+
+        if vad_weights_dir.exists():
+            print_color(YELLOW, f"Removing existing weights at {vad_weights_dir} to regenerate with {precision}...")
+            shutil.rmtree(vad_weights_dir)
+
+        dl_args_vad = DownloadArgs()
+        dl_args_vad.model_id = vad_model_id
+        dl_args_vad.precision = precision
+        dl_args_vad.cache_dir = None
+        dl_args_vad.token = getattr(args, 'token', None)
+
+        download_result = cmd_download(dl_args_vad)
+        if download_result != 0:
+            return download_result
+
     test_script = PROJECT_ROOT / "tests" / "run.sh"
 
     if not test_script.exists():
@@ -824,6 +865,8 @@ def cmd_test(args):
         cmd.extend(["--model", args.model])
     if args.transcribe_model:
         cmd.extend(["--transcribe_model", args.transcribe_model])
+    if args.vad_model:
+        cmd.extend(["--vad_model", args.vad_model])
     if precision:
         cmd.extend(["--precision", precision])
     if getattr(args, 'no_rebuild', False):
@@ -832,6 +875,8 @@ def cmd_test(args):
         cmd.append("--android")
     if args.ios:
         cmd.append("--ios")
+    if args.only:
+        cmd.extend(["--only", args.only])
 
     env = os.environ.copy()
     if getattr(args, 'no_cloud_tele', False):
@@ -1109,6 +1154,7 @@ def create_parser():
     --large                            use larger models (LFM2.5-VL-1.6B + whisper-small)
     --precision INT4|INT8|FP16         regenerates weights with precision
     --no-rebuild                       skip building library and tests
+    --only <test_name>                 run specific test (engine, graph, index, kernel, kv_cache, performance, etc)
     --ios                              run on connected iPhone
     --android                          run on connected Android
 
@@ -1214,6 +1260,8 @@ def create_parser():
                              help='Model to use for tests')
     test_parser.add_argument('--transcribe_model', default='UsefulSensors/moonshine-base',
                              help='Transcribe model to use')
+    test_parser.add_argument('--vad_model', default='silero-vad',
+                             help='VAD model to use')
     test_parser.add_argument('--large', action='store_true',
                              help='Use larger models (LFM2.5-VL-1.6B + whisper-small)')
     test_parser.add_argument('--precision', choices=['INT4', 'INT8', 'FP16'],
@@ -1225,6 +1273,7 @@ def create_parser():
                              help='Run tests on Android')
     test_parser.add_argument('--ios', action='store_true',
                              help='Run tests on iOS')
+    test_parser.add_argument('--only', help='Only run the specified test (engine, graph, index, kernel, kv_cache, performance, etc)')
     test_parser.add_argument('--no-cloud-tele', action='store_true',
                              help='Disable cloud telemetry (write to cache only)')
     test_parser.add_argument('--reconvert', action='store_true',
