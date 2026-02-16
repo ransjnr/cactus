@@ -150,7 +150,7 @@ def export_and_publish_model(args, api):
                 try:
                     mlpackage = export_pro_weights(args.model, bits)
                     if mlpackage:
-                        shutil.copy(str(mlpackage), str(exported))
+                        shutil.copytree(str(mlpackage), str(exported / mlpackage.name))
                         apple_zip = weights_dir / f"{model_name_lower}-{precision}-apple.zip"
                         zip_dir(exported, apple_zip)
                         fingerprint.update(sha256(apple_zip).encode())
@@ -220,7 +220,7 @@ def main():
             print("Error: export_model requires --version, --org, and --model")
             return 1
         if not any([args.int4, args.int8, args.fp16]):
-            print("Error: At least one precision flag (--int4, --int8, --fp16) must be set")
+            print("Error: At least one precision flag must be set")
             return 1
         return export_and_publish_model(args, api)
     elif args.task == "update_org_readme":
