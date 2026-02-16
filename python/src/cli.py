@@ -141,8 +141,7 @@ def cmd_download(args):
         print("Please run: ./setup")
         return 1
 
-    from .converter_llm import convert_hf_model_weights
-    from .converter_vlm import convert_processors
+    from .converter import convert_hf_model_weights
     from .tokenizer import convert_hf_tokenizer
     from .tensor_io import format_config_value
     from .config_utils import is_lfm2_vl, pick_dtype, vision_weight_sanity_check
@@ -220,11 +219,6 @@ def cmd_download(args):
                 print_color(RED, "Vision embeddings look randomly initialized.")
                 return 1
 
-            try:
-                convert_processors(processor, model_id, weights_dir, token=token)
-            except Exception as e:
-                print(f"  Warning: convert_processors failed: {e}")
-
         elif 'moonshine' in model_id.lower():
             from transformers import MoonshineForConditionalGeneration
             print(f"  Note: Loading Moonshine model using MoonshineForConditionalGeneration...")
@@ -243,7 +237,7 @@ def cmd_download(args):
                 print("Install with: pip install torchaudio")
                 return 1
 
-            from .converter_silero_vad import convert_silero_vad_weights
+            from .converter import convert_silero_vad_weights
 
             model, _ = torch.hub.load("snakers4/silero-vad", "silero_vad", force_reload=False)
             convert_silero_vad_weights(model, weights_dir, precision, args)
