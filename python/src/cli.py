@@ -836,18 +836,15 @@ def cmd_test(args):
         if download_result != 0:
             return download_result
 
-        vad_model_id = getattr(args, 'vad_model', 'silero-vad')
-        vad_weights_dir = get_weights_dir(vad_model_id)
-
-        if vad_weights_dir.exists():
-            print_color(YELLOW, f"Removing existing weights at {vad_weights_dir} to regenerate with {precision}...")
-            shutil.rmtree(vad_weights_dir)
+        vad_model_id = getattr(args, 'vad_model', 'snakers4/silero-vad')
 
         dl_args_vad = DownloadArgs()
         dl_args_vad.model_id = vad_model_id
-        dl_args_vad.precision = precision
+        if precision:
+            dl_args_vad.precision = precision
         dl_args_vad.cache_dir = None
         dl_args_vad.token = getattr(args, 'token', None)
+        dl_args_vad.reconvert = True
 
         download_result = cmd_download(dl_args_vad)
         if download_result != 0:
@@ -1090,9 +1087,9 @@ def create_parser():
                                        auto downloads and spins up
 
     Optional flags:
-    --precision INT4|INT8|FP16   default: INT8
+    --precision INT4|INT8|FP16         default: INT8
     --token <token>                    HF token (for gated models)
-    --reconvert                        force reconversion from source
+    --reconvert                        force model weights reconversion from source
 
   -----------------------------------------------------------------
 
@@ -1103,7 +1100,7 @@ def create_parser():
     --file <audio.wav>                 transcribe audio file instead of mic
     --precision INT4|INT8|FP16         default: INT8
     --token <token>                    HF token (for gated models)
-    --reconvert                        force reconversion from source
+    --reconvert                        force model weights reconversion from source
 
     Examples:
     cactus transcribe                  live microphone transcription
@@ -1117,10 +1114,9 @@ def create_parser():
                                        see supported weights on ReadMe
 
     Optional flags:
-    --precision INT4|INT8|FP16   quantization (default: INT8)
+    --precision INT4|INT8|FP16         quantization (default: INT8)
     --token <token>                    HuggingFace API token
-    --reconvert                        download original and convert
-                                       (instead of pre-converted)
+    --reconvert                        force model weights reconversion from source
 
   -----------------------------------------------------------------
 
@@ -1153,6 +1149,7 @@ def create_parser():
     --transcribe_model <model>         default: whisper-small
     --large                            use larger models (LFM2.5-VL-1.6B + whisper-small)
     --precision INT4|INT8|FP16         regenerates weights with precision
+    --reconvert                        force model weights reconversion from source
     --no-rebuild                       skip building library and tests
     --only <test_name>                 run specific test (engine, graph, index, kernel, kv_cache, performance, etc)
     --ios                              run on connected iPhone
@@ -1260,7 +1257,7 @@ def create_parser():
                              help='Model to use for tests')
     test_parser.add_argument('--transcribe_model', default='UsefulSensors/moonshine-base',
                              help='Transcribe model to use')
-    test_parser.add_argument('--vad_model', default='silero-vad',
+    test_parser.add_argument('--vad_model', default='snakers4/silero-vad',
                              help='VAD model to use')
     test_parser.add_argument('--large', action='store_true',
                              help='Use larger models (LFM2.5-VL-1.6B + whisper-small)')
