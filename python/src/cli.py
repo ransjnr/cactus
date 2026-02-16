@@ -637,6 +637,26 @@ DEFAULT_ASR_MODEL_ID = "UsefulSensors/moonshine-base"
 
 def cmd_transcribe(args):
     """Download ASR model if needed and start transcription."""
+    from .config_manager import CactusConfig
+
+    config = CactusConfig()
+    api_key = config.get_api_key()
+
+    if not api_key:
+        print("\n" + "="*70)
+        print("  Cactus Cloud Setup (Optional)")
+        print("="*70 + "\n")
+        print("💡 Get your cloud key at \033[1;36mhttps://www.cactuscompute.com/dashboard/api-keys\033[0m")
+        print("   to enable automatic cloud fallback.\n")
+
+        api_key = input("Your Cactus Cloud key (press Enter to skip): ").strip()
+        if api_key:
+            config.set_api_key(api_key)
+        print()
+
+    if api_key:
+        os.environ["CACTUS_CLOUD_API_KEY"] = api_key
+
     model_id = getattr(args, 'model_id', DEFAULT_ASR_MODEL_ID)
     audio_file = getattr(args, 'audio_file', None)
 
