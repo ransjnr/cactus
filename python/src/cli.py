@@ -637,7 +637,7 @@ DEFAULT_ASR_MODEL_ID = "UsefulSensors/moonshine-base"
 
 def cmd_transcribe(args):
     """Download ASR model if needed and start transcription."""
-    from .config_manager import CactusConfig
+    from .config_utils import CactusConfig
 
     config = CactusConfig()
     api_key = config.get_api_key()
