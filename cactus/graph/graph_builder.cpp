@@ -431,6 +431,25 @@ size_t CactusGraph::lstm_cell(size_t input, size_t h_prev, size_t c_prev, size_t
     return add_node(OpType::LSTM_CELL, {input, h_prev, c_prev, weight_ih, weight_hh, bias_ih, bias_hh}, output_shape, {});
 }
 
+size_t CactusGraph::stft_magnitude(size_t input, size_t weight, size_t stride, size_t num_fft_bins) {
+    const auto& xin = get_output_buffer(input);
+    const auto& w = get_output_buffer(weight);
+
+    if (xin.shape.size() != 3) throw std::runtime_error("stft_magnitude expects N,C,L input");
+    if (w.shape.size() != 3) throw std::runtime_error("stft_magnitude weight expects [C_out, C_in, K]");
+
+    size_t N = xin.shape[0];
+    size_t L = xin.shape[2];
+    size_t K = w.shape[2];
+    size_t L_out = (L - K) / stride + 1;
+
+    OpParams params{};
+    params.stride = stride;
+    params.num_fft_bins = num_fft_bins;
+
+    return add_node(OpType::STFT_MAGNITUDE, {input, weight}, {N, num_fft_bins, L_out}, params);
+}
+
 size_t CactusGraph::concat(size_t input1, size_t input2, int axis) {
     const auto& buffer1 = get_output_buffer(input1);
     const auto& buffer2 = get_output_buffer(input2);

@@ -41,13 +41,7 @@ void SileroVADModel::build_graph() {
     graph_nodes_.h_prev = graph_.input({1, HIDDEN_SIZE}, Precision::FP16);
     graph_nodes_.c_prev = graph_.input({1, HIDDEN_SIZE}, Precision::FP16);
 
-    auto stft_complex = graph_.conv1d(graph_nodes_.input, weight_nodes_.stft_basis, 128);
-    auto real_parts = graph_.slice(stft_complex, 1, 0, 129);
-    auto imag_parts = graph_.slice(stft_complex, 1, 129, 129);
-    auto real_sq = graph_.multiply(real_parts, real_parts);
-    auto imag_sq = graph_.multiply(imag_parts, imag_parts);
-    auto magnitude_sq = graph_.add(real_sq, imag_sq);
-    auto stft = graph_.scalar_sqrt(magnitude_sq);
+    auto stft = graph_.stft_magnitude(graph_nodes_.input, weight_nodes_.stft_basis, 128, 129);
 
     const size_t strides[4] = {1, 2, 2, 1};
     auto x = stft;
@@ -95,6 +89,8 @@ bool SileroVADModel::init(const std::string& model_folder, size_t context_size,
     state_.h.resize(HIDDEN_SIZE, (__fp16)0.0f);
     state_.c.resize(HIDDEN_SIZE, (__fp16)0.0f);
     state_.context.resize(CONTEXT_SIZE, 0.0f);
+    state_.input_buf.resize(CONTEXT_SIZE + CHUNK_SIZE + REFLECT_PAD_SIZE, 0.0f);
+    state_.input_fp16.resize(CONTEXT_SIZE + CHUNK_SIZE + REFLECT_PAD_SIZE);
 
     model_folder_path_ = model_folder;
 
@@ -122,20 +118,20 @@ float SileroVADModel::process_chunk(const std::vector<float>& audio_chunk) {
 
     const size_t input_size = CONTEXT_SIZE + CHUNK_SIZE + REFLECT_PAD_SIZE;
 
-    std::vector<__fp16> input_fp16(input_size);
-    std::vector<float> input_with_context_and_pad(input_size);
+    float* input_buf = state_.input_buf.data();
+    __fp16* input_fp16 = state_.input_fp16.data();
 
-    std::memcpy(input_with_context_and_pad.data(), state_.context.data(), CONTEXT_SIZE * sizeof(float));
-    std::memcpy(input_with_context_and_pad.data() + CONTEXT_SIZE, audio, CHUNK_SIZE * sizeof(float));
+    std::memcpy(input_buf, state_.context.data(), CONTEXT_SIZE * sizeof(float));
+    std::memcpy(input_buf + CONTEXT_SIZE, audio, CHUNK_SIZE * sizeof(float));
 
     for (size_t i = 0; i < REFLECT_PAD_SIZE; i++) {
-        input_with_context_and_pad[CONTEXT_SIZE + CHUNK_SIZE + i] =
-            input_with_context_and_pad[CONTEXT_SIZE + CHUNK_SIZE - 2 - i];
+        input_buf[CONTEXT_SIZE + CHUNK_SIZE + i] =
+            input_buf[CONTEXT_SIZE + CHUNK_SIZE - 2 - i];
     }
 
-    cactus_fp32_to_fp16(input_with_context_and_pad.data(), input_fp16.data(), input_size);
+    cactus_fp32_to_fp16(input_buf, input_fp16, input_size);
 
-    graph_.set_input(graph_nodes_.input, input_fp16.data(), Precision::FP16);
+    graph_.set_input(graph_nodes_.input, input_fp16, Precision::FP16);
     graph_.set_input(graph_nodes_.h_prev, state_.h.data(), Precision::FP16);
     graph_.set_input(graph_nodes_.c_prev, state_.c.data(), Precision::FP16);
     graph_.execute();
@@ -153,7 +149,7 @@ float SileroVADModel::process_chunk(const std::vector<float>& audio_chunk) {
 
     float vad_score_f32 = static_cast<float>(vad_score[0]);
 
-    std::memcpy(state_.context.data(), input_with_context_and_pad.data() + CHUNK_SIZE, CONTEXT_SIZE * sizeof(float));
+    std::memcpy(state_.context.data(), input_buf + CHUNK_SIZE, CONTEXT_SIZE * sizeof(float));
 
     return vad_score_f32;
 }
@@ -179,16 +175,16 @@ std::vector<SileroVADModel::SpeechTimestamp> SileroVADModel::get_speech_timestam
     std::vector<float> speech_probs;
     speech_probs.reserve(audio_length_samples / window_size_samples + 1);
 
+    std::vector<float> chunk(window_size_samples, 0.0f);
+
     for (size_t current_start = 0; current_start < audio_length_samples; current_start += window_size_samples) {
-        std::vector<float> chunk;
-        chunk.reserve(window_size_samples);
+        size_t remaining = audio_length_samples - current_start;
+        size_t copy_len = std::min(remaining, window_size_samples);
 
-        for (size_t i = current_start; i < current_start + window_size_samples && i < audio_length_samples; ++i) {
-            chunk.push_back(audio[i]);
-        }
+        std::memcpy(chunk.data(), audio.data() + current_start, copy_len * sizeof(float));
 
-        while (chunk.size() < window_size_samples) {
-            chunk.push_back(0.0f);
+        if (copy_len < window_size_samples) {
+            std::memset(chunk.data() + copy_len, 0, (window_size_samples - copy_len) * sizeof(float));
         }
 
         float speech_prob = process_chunk(chunk);

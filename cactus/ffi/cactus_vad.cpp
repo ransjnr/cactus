@@ -144,11 +144,9 @@ int cactus_vad(
             const int16_t* pcm_samples = reinterpret_cast<const int16_t*>(pcm_buffer);
             size_t num_samples = pcm_buffer_size / 2;
 
-            std::vector<float> waveform_fp32(num_samples);
+            audio.resize(num_samples);
             for (size_t i = 0; i < num_samples; i++)
-                waveform_fp32[i] = static_cast<float>(pcm_samples[i]) / 32768.0f;
-
-            audio = resample_to_16k_fp32(waveform_fp32, 16000);
+                audio[i] = static_cast<float>(pcm_samples[i]) / 32768.0f;
         } else {
             AudioFP32 wav_audio = load_wav(audio_file_path);
             audio = resample_to_16k_fp32(wav_audio.samples, wav_audio.sample_rate);

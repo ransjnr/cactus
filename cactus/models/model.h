@@ -933,6 +933,8 @@ private:
         std::vector<__fp16> h;
         std::vector<__fp16> c;
         std::vector<float> context;
+        std::vector<float> input_buf;
+        std::vector<__fp16> input_fp16;
     } state_;
 
     CactusGraph graph_;
