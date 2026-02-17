@@ -783,6 +783,7 @@ def _cmd_transcribe_android(weights_dir, audio_file, args):
     cloud_handoff_threshold = os.environ.get("CACTUS_CLOUD_HANDOFF_THRESHOLD", "")
     ca_bundle = os.environ.get("CACTUS_CA_BUNDLE", "")
     ca_path = os.environ.get("CACTUS_CA_PATH", "")
+    force_handoff = os.environ.get("CACTUS_FORCE_HANDOFF", "")
     env_exports = []
     if cloud_api_key:
         env_exports.append(f"export CACTUS_CLOUD_API_KEY='{cloud_api_key}'")
@@ -796,6 +797,8 @@ def _cmd_transcribe_android(weights_dir, audio_file, args):
         env_exports.append(f"export CACTUS_CA_PATH='{ca_path}'")
     if getattr(args, "no_cloud_tele", False):
         env_exports.append("export CACTUS_NO_CLOUD_TELE=1")
+    if force_handoff:
+        env_exports.append(f"export CACTUS_FORCE_HANDOFF='{force_handoff}'")
 
     shell_cmd = " && ".join(env_exports + [f"{device_bin_root}/asr {device_model} {device_audio}"])
     print_color(BLUE, "Running Android transcription...")
