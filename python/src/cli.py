@@ -52,8 +52,8 @@ def run_command(cmd, cwd=None, check=True):
     return result
 
 
-def download_from_hf(model_id, weights_dir):
-    """Download pre-converted model from cactus-compute HuggingFace."""
+def download_from_hf(model_id, weights_dir, precision):
+    """Download pre-converted model from Cactus-Compute HuggingFace."""
     try:
         from huggingface_hub import hf_hub_download, list_repo_files
         import zipfile
@@ -63,12 +63,13 @@ def download_from_hf(model_id, weights_dir):
         return False
 
     model_name = get_model_dir_name(model_id)
-    org = "cactus-compute"
+    org = "Cactus-Compute"
     repo_id = f"{org}/{model_id.split('/')[-1]}"
 
     try:
-        apple_zip = f"{model_name}-apple.zip"
-        standard_zip = f"{model_name}.zip"
+        precision_lower = precision.lower()
+        apple_zip = f"{model_name}-{precision_lower}-apple.zip"
+        standard_zip = f"{model_name}-{precision_lower}.zip"
 
         repo_files = list_repo_files(repo_id, repo_type="model")
 
@@ -112,10 +113,11 @@ def download_from_hf(model_id, weights_dir):
 
 
 def cmd_download(args):
-    """Download model weights. By default downloads pre-converted weights from cactus-compute."""
+    """Download model weights. By default downloads pre-converted weights from Cactus-Compute."""
     model_id = args.model_id
     weights_dir = get_weights_dir(model_id)
     reconvert = getattr(args, 'reconvert', False)
+    precision = getattr(args, 'precision', 'INT8')
 
     if reconvert and weights_dir.exists():
         print_color(YELLOW, f"Removing cached weights for reconversion...")
@@ -130,7 +132,7 @@ def cmd_download(args):
     print("=" * 45)
 
     if not reconvert:
-        if download_from_hf(model_id, weights_dir):
+        if download_from_hf(model_id, weights_dir, precision):
             return 0
 
     try:
@@ -343,6 +345,7 @@ def cmd_build(args):
 
     cactus_dir = PROJECT_ROOT / "cactus"
     lib_path = cactus_dir / "build" / "libcactus.a"
+    vendored_curl = PROJECT_ROOT / "libs" / "curl" / "macos" / "libcurl.a"
 
     print_color(YELLOW, "Building Cactus library...")
     build_script = cactus_dir / "build.sh"
@@ -368,6 +371,10 @@ def cmd_build(args):
     is_darwin = platform.system() == "Darwin"
 
     if is_darwin:
+        if not vendored_curl.exists():
+            print_color(RED, f"Error: vendored libcurl not found at {vendored_curl}")
+            print("Build it first and place it in libs/curl/macos/libcurl.a")
+            return 1
         compiler = "clang++"
         cmd = [
             compiler, "-std=c++20", "-O3",
@@ -375,10 +382,13 @@ def cmd_build(args):
             str(chat_cpp),
             str(lib_path),
             "-o", "chat",
-            "-lcurl",
+            str(vendored_curl),
             "-framework", "Accelerate",
             "-framework", "CoreML",
-            "-framework", "Foundation"
+            "-framework", "Foundation",
+            "-framework", "Security",
+            "-framework", "SystemConfiguration",
+            "-framework", "CFNetwork",
         ]
     else:
         compiler = "g++"
@@ -448,10 +458,13 @@ def cmd_build(args):
                 str(asr_cpp),
                 str(lib_path),
                 "-o", "asr",
-                "-lcurl",
+                str(vendored_curl),
                 "-framework", "Accelerate",
                 "-framework", "CoreML",
-                "-framework", "Foundation"
+                "-framework", "Foundation",
+                "-framework", "Security",
+                "-framework", "SystemConfiguration",
+                "-framework", "CFNetwork",
             ])
             if sdl2_available:
                 cmd.extend(sdl2_lib.split())
@@ -859,53 +872,24 @@ def cmd_test(args):
         args.transcribe_model = 'openai/whisper-small'
         print_color(BLUE, f"Using large models: {args.model}, {args.transcribe_model}, {args.vad_model}")
 
-    precision = getattr(args, 'precision', None)
-    reconvert = getattr(args, 'reconvert', False)
+    if getattr(args, 'reconvert', False):
+        for model_id in [
+            getattr(args, 'model', 'LiquidAI/LFM2-VL-450M'),
+            getattr(args, 'transcribe_model', 'UsefulSensors/moonshine-base'),
+            getattr(args, 'vad_model', 'snakers4/silero-vad')
+        ]:
+            class DownloadArgs:
+                pass
+            dl_args = DownloadArgs()
+            dl_args.model_id = model_id
+            dl_args.reconvert = True
+            if args.precision:
+                dl_args.precision = args.precision
+            if args.token:
+                dl_args.token = args.token
 
-    if precision or reconvert:
-        model_id = getattr(args, 'model', 'LiquidAI/LFM2-VL-450M')
-
-        class DownloadArgs:
-            pass
-        dl_args = DownloadArgs()
-        dl_args.model_id = model_id
-        if precision:
-            dl_args.precision = precision
-        dl_args.cache_dir = None
-        dl_args.token = getattr(args, 'token', None)
-        dl_args.reconvert = True
-
-        download_result = cmd_download(dl_args)
-        if download_result != 0:
-            return download_result
-
-        transcribe_model_id = getattr(args, 'transcribe_model', 'UsefulSensors/moonshine-base')
-
-        dl_args_transcribe = DownloadArgs()
-        dl_args_transcribe.model_id = transcribe_model_id
-        if precision:
-            dl_args_transcribe.precision = precision
-        dl_args_transcribe.cache_dir = None
-        dl_args_transcribe.token = getattr(args, 'token', None)
-        dl_args_transcribe.reconvert = True
-
-        download_result = cmd_download(dl_args_transcribe)
-        if download_result != 0:
-            return download_result
-
-        vad_model_id = getattr(args, 'vad_model', 'snakers4/silero-vad')
-
-        dl_args_vad = DownloadArgs()
-        dl_args_vad.model_id = vad_model_id
-        if precision:
-            dl_args_vad.precision = precision
-        dl_args_vad.cache_dir = None
-        dl_args_vad.token = getattr(args, 'token', None)
-        dl_args_vad.reconvert = True
-
-        download_result = cmd_download(dl_args_vad)
-        if download_result != 0:
-            return download_result
+            if cmd_download(dl_args) != 0:
+                return 1
 
     test_script = PROJECT_ROOT / "tests" / "run.sh"
 
@@ -921,8 +905,8 @@ def cmd_test(args):
         cmd.extend(["--transcribe_model", args.transcribe_model])
     if args.vad_model:
         cmd.extend(["--vad_model", args.vad_model])
-    if precision:
-        cmd.extend(["--precision", precision])
+    if args.precision:
+        cmd.extend(["--precision", args.precision])
     if getattr(args, 'no_rebuild', False):
         cmd.append("--no-rebuild")
     if args.android:
@@ -1220,8 +1204,8 @@ def create_parser():
 
     Optional flags:
     --model <model>                    default: LFM2-VL-450M
-    --transcribe_model <model>         default: whisper-small
-    --large                            use larger models (LFM2.5-VL-1.6B + whisper-small)
+    --transcribe_model <model>         default: moonshine-base
+    --large                            use larger models (LFM2.5-VL-1.6B + openai/whisper-small)
     --precision INT4|INT8|FP16         regenerates weights with precision
     --reconvert                        force model weights reconversion from source
     --no-rebuild                       skip building library and tests
@@ -1271,7 +1255,7 @@ def create_parser():
     download_parser.add_argument('--cache-dir', help='Cache directory for HuggingFace models')
     download_parser.add_argument('--token', help='HuggingFace API token')
     download_parser.add_argument('--reconvert', action='store_true',
-                                 help='Download original model and convert (instead of using pre-converted from cactus-compute)')
+                                 help='Download original model and convert (instead of using pre-converted from Cactus-Compute)')
 
     build_parser = subparsers.add_parser('build', help='Build the chat application')
     build_parser.add_argument('--apple', action='store_true',
@@ -1293,7 +1277,7 @@ def create_parser():
     run_parser.add_argument('--no-cloud-tele', action='store_true',
                             help='Disable cloud telemetry (write to cache only)')
     run_parser.add_argument('--reconvert', action='store_true',
-                            help='Download original model and convert (instead of using pre-converted from cactus-compute)')
+                            help='Download original model and convert (instead of using pre-converted from Cactus-Compute)')
 
     transcribe_parser = subparsers.add_parser('transcribe', help='Download ASR model and run transcription')
     transcribe_parser.add_argument('model_id', nargs='?', default=DEFAULT_ASR_MODEL_ID,
@@ -1307,7 +1291,7 @@ def create_parser():
     transcribe_parser.add_argument('--no-cloud-tele', action='store_true',
                                    help='Disable cloud telemetry (write to cache only)')
     transcribe_parser.add_argument('--reconvert', action='store_true',
-                                   help='Download original model and convert (instead of using pre-converted from cactus-compute)')
+                                   help='Download original model and convert (instead of using pre-converted from Cactus-Compute)')
 
     eval_parser = subparsers.add_parser('eval', help='Run evaluation scripts outside the cactus submodule')
     eval_parser.add_argument('model_id', nargs='?', default=DEFAULT_MODEL_ID,
@@ -1324,7 +1308,7 @@ def create_parser():
     eval_parser.add_argument('--no-cloud-tele', action='store_true',
                              help='Disable cloud telemetry (write to cache only)')
     eval_parser.add_argument('--reconvert', action='store_true',
-                             help='Download original model and convert (instead of using pre-converted from cactus-compute)')
+                             help='Download original model and convert (instead of using pre-converted from Cactus-Compute)')
 
     test_parser = subparsers.add_parser('test', help='Run the test suite')
     test_parser.add_argument('--model', default='LiquidAI/LFM2-VL-450M',
@@ -1334,7 +1318,7 @@ def create_parser():
     test_parser.add_argument('--vad_model', default='snakers4/silero-vad',
                              help='VAD model to use')
     test_parser.add_argument('--large', action='store_true',
-                             help='Use larger models (LFM2.5-VL-1.6B + whisper-small)')
+                             help='Use larger models (LFM2.5-VL-1.6B + openai/whisper-small)')
     test_parser.add_argument('--precision', choices=['INT4', 'INT8', 'FP16'],
                              help='Regenerate weights with this precision (deletes existing weights)')
     test_parser.add_argument('--no-rebuild', action='store_true',
@@ -1348,7 +1332,7 @@ def create_parser():
     test_parser.add_argument('--no-cloud-tele', action='store_true',
                              help='Disable cloud telemetry (write to cache only)')
     test_parser.add_argument('--reconvert', action='store_true',
-                             help='Download original model and convert (instead of using pre-converted from cactus-compute)')
+                             help='Download original model and convert (instead of using pre-converted from Cactus-Compute)')
 
     auth_parser = subparsers.add_parser('auth', help='Manage Cactus Cloud API key')
     auth_parser.add_argument('--clear', action='store_true',
