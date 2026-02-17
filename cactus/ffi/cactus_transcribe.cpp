@@ -126,7 +126,7 @@ int cactus_transcribe(
         }
 
         const char* force_handoff_env = std::getenv("CACTUS_FORCE_HANDOFF");
-        if (force_handoff_env && std::string(force_handoff_env) == "1") {
+        if (force_handoff_env && force_handoff_env[0] == '1' && force_handoff_env[1] == '\0') {
             cloud_handoff_threshold = 0.0001f;
         }
 
