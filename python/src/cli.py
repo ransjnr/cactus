@@ -844,6 +844,11 @@ def cmd_transcribe(args):
     if getattr(args, 'no_cloud_tele', False):
         os.environ["CACTUS_NO_CLOUD_TELE"] = "1"
 
+    if getattr(args, 'force_handoff', False):
+        os.environ["CACTUS_FORCE_HANDOFF"] = "1"
+    else:
+        os.environ.pop("CACTUS_FORCE_HANDOFF", None)
+
     audio_extensions = ('.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac')
     if model_id and model_id.lower().endswith(audio_extensions):
         audio_file = model_id
@@ -1496,6 +1501,8 @@ def create_parser():
     transcribe_parser.add_argument('--token', help='HuggingFace API token')
     transcribe_parser.add_argument('--no-cloud-tele', action='store_true',
                                    help='Disable cloud telemetry (write to cache only)')
+    transcribe_parser.add_argument('--force-handoff', action='store_true',
+                                   help='Force cloud handoff by assuming low confidence')
     transcribe_parser.add_argument('--reconvert', action='store_true',
                                    help='Download original model and convert (instead of using pre-converted from Cactus-Compute)')
     transcribe_parser.add_argument('--android', action='store_true',
