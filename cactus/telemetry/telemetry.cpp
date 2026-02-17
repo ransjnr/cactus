@@ -96,9 +96,22 @@ static bool extract_double_field(const std::string& line, const std::string& key
 static bool extract_int_field(const std::string& line, const std::string& key, int& out);
 static bool extract_double_field_raw(const std::string& line, const std::string& key, double& out);
 
+static void mkdir_p(const std::string& path) {
+    if (path.empty()) return;
+
+    std::string current;
+    for (size_t i = 0; i < path.size(); ++i) {
+        current += path[i];
+        if (path[i] == '/' && i > 0) {
+            mkdir(current.c_str(), 0755);
+        }
+    }
+    mkdir(path.c_str(), 0755);
+}
+
 static std::string get_telemetry_dir() {
     if (!custom_cache_location.empty()) {
-        mkdir(custom_cache_location.c_str(), 0755);
+        mkdir_p(custom_cache_location);
         return custom_cache_location;
     }
 

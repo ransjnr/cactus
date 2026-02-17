@@ -146,6 +146,11 @@ static void parse_stream_transcribe_init_options(const std::string& json,
     }
 }
 
+struct CloudResponse {
+    std::string transcript;
+    std::string api_key_hash;
+};
+
 #ifdef CACTUS_USE_CURL
 static const std::string CLOUD_API_URL = "https://104.198.76.3/api/v1/transcribe";
 static std::atomic<bool> g_warned_missing_cloud_api_key{false};
@@ -235,11 +240,6 @@ static std::vector<uint8_t> build_wav(const uint8_t* pcm, size_t pcm_bytes) {
     std::memcpy(wav.data() + 44, pcm, pcm_bytes);
     return wav;
 }
-
-struct CloudResponse {
-    std::string transcript;
-    std::string api_key_hash;
-};
 
 static CloudResponse cloud_transcribe(const std::string& audio_b64, const std::string& original_text) {
     std::string api_key = get_cloud_api_key();
