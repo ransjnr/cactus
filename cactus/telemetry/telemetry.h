@@ -24,6 +24,7 @@ void init(const char* project_id = nullptr, const char* project_scope = nullptr,
 void setEnabled(bool enabled);
 void setCloudDisabled(bool disabled);
 void setTelemetryEnvironment(const char* framework, const char* cache_location);
+void setCloudKey(const char* key);
 void recordInit(const char* model, bool success, double response_time_ms, const char* message);
 void recordCompletion(const char* model, const CompletionMetrics& metrics);
 void recordCompletion(const char* model, bool success, double ttft_ms, double tps, double response_time_ms, int tokens, const char* message);

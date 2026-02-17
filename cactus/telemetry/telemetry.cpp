@@ -931,6 +931,12 @@ void setTelemetryEnvironment(const char* framework_str, const char* cache_locati
     }
 }
 
+void setCloudKey(const char* key) {
+    if (key && key[0] != '\0') {
+        cloud_key = key;
+    }
+}
+
 void recordInit(const char* model, bool success, double response_time_ms, const char* message) {
     if (!enabled.load() || !ids_ready.load()) return;
     double nan = std::numeric_limits<double>::quiet_NaN();
