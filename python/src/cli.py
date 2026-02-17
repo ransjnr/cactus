@@ -1095,7 +1095,9 @@ def cmd_test(args):
         cmd.extend(["--only", args.only])
 
     env = os.environ.copy()
-    if getattr(args, 'no_cloud_tele', False):
+    if getattr(args, 'enable_telemetry', False):
+        env.pop("CACTUS_NO_CLOUD_TELE", None)
+    else:
         env["CACTUS_NO_CLOUD_TELE"] = "1"
 
     result = subprocess.run(cmd, cwd=PROJECT_ROOT / "tests", env=env)
@@ -1539,8 +1541,8 @@ def create_parser():
     test_parser.add_argument('--ios', action='store_true',
                              help='Run tests on iOS')
     test_parser.add_argument('--only', help='Only run the specified test (engine, graph, index, kernel, kv_cache, performance, etc)')
-    test_parser.add_argument('--no-cloud-tele', action='store_true',
-                             help='Disable cloud telemetry (write to cache only)')
+    test_parser.add_argument('--enable-telemetry', action='store_true',
+                             help='Enable cloud telemetry (disabled by default in tests)')
     test_parser.add_argument('--reconvert', action='store_true',
                              help='Download original model and convert (instead of using pre-converted from Cactus-Compute)')
 
