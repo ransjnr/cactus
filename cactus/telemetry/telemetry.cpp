@@ -65,6 +65,7 @@ static std::string device_model;
 static std::string device_os;
 static std::string device_os_version;
 static std::string device_brand;
+static std::string cactus_version;
 static std::string device_registered_file;
 static std::string project_registered_file;
 static std::atomic<bool> device_registered{false};
@@ -489,6 +490,32 @@ static void collect_device_info() {
     }
 }
 
+static void read_cactus_version() {
+    const char* version_paths[] = {
+        "CACTUS_VERSION",
+        "../CACTUS_VERSION",
+        "../../CACTUS_VERSION",
+        "../../../CACTUS_VERSION"
+    };
+
+    for (const char* path : version_paths) {
+        std::ifstream file(path);
+        if (file.is_open()) {
+            std::string line;
+            if (std::getline(file, line)) {
+                size_t start = line.find_first_not_of(" \t\r\n");
+                size_t end = line.find_last_not_of(" \t\r\n");
+                if (start != std::string::npos && end != std::string::npos) {
+                    cactus_version = line.substr(start, end - start + 1);
+                    return;
+                }
+            }
+        }
+    }
+
+    cactus_version = "";
+}
+
 static void apply_curl_tls_trust(CURL* curl) {
     if (!curl) return;
     const char* ca_bundle = std::getenv("CACTUS_CA_BUNDLE");
@@ -689,6 +716,9 @@ static bool send_batch_to_cloud(const std::vector<Event>& local) {
             payload << "\"cloud_key\":\"" << cloud_key << "\",";
         }
         payload << "\"framework\":\"cpp\",";
+        if (!cactus_version.empty()) {
+            payload << "\"framework_version\":\"" << cactus_version << "\",";
+        }
         payload << "\"device_id\":\"" << device_id << "\"";
         if (e.message[0] != '\0') {
             payload << ",\"message\":\"" << escape_json_string(e.message) << "\"";
@@ -867,6 +897,7 @@ void init(const char* project_id_param, const char* project_scope, const char* c
     device_registered.store(load_registered_flag(device_flag_file));
     device_id = load_or_create_id(device_file);
     collect_device_info();
+    read_cactus_version();
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     if (!atexit_registered.exchange(true)) {
