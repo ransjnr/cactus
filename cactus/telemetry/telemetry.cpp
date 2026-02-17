@@ -537,8 +537,7 @@ static bool ensure_project_row(CURL* curl) {
     std::string url = supabase_url + "/rest/v1/projects";
     std::ostringstream payload;
     payload << "[{";
-    payload << "\"id\":\"" << project_id << "\"";
-    payload << ",\"project_key\":\"" << project_id << "\"";
+    payload << "\"project_key\":\"" << project_id << "\"";
     if (!cloud_key.empty()) {
         payload << ",\"cloud_key\":\"" << cloud_key << "\"";
     }
