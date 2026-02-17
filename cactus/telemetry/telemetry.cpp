@@ -545,9 +545,6 @@ static bool ensure_project_row(CURL* curl) {
     std::ostringstream payload;
     payload << "[{";
     payload << "\"project_key\":\"" << project_id << "\"";
-    if (!cloud_key.empty()) {
-        payload << ",\"cloud_key\":\"" << cloud_key << "\"";
-    }
     if (!project_scope.empty()) {
         payload << ",\"name\":\"" << project_scope << "\"";
     }
