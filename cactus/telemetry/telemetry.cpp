@@ -729,7 +729,7 @@ static bool send_batch_to_cloud(const std::vector<Event>& local) {
             payload << "\"project_id\":\"" << project_id << "\",";
         }
         if (!cloud_key.empty()) {
-            payload << "\"cloud_key\":\"" << cloud_key << "\",";
+            payload << "\"key_hash\":\"" << cloud_key << "\",";
         }
         payload << "\"framework\":\"" << framework << "\",";
         if (!cactus_version.empty()) {
