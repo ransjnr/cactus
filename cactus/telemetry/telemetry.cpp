@@ -66,6 +66,8 @@ static std::string device_os;
 static std::string device_os_version;
 static std::string device_brand;
 static std::string cactus_version;
+static std::string framework = "cpp";
+static std::string custom_cache_location;
 static std::string device_registered_file;
 static std::string project_registered_file;
 static std::atomic<bool> device_registered{false};
@@ -95,6 +97,11 @@ static bool extract_int_field(const std::string& line, const std::string& key, i
 static bool extract_double_field_raw(const std::string& line, const std::string& key, double& out);
 
 static std::string get_telemetry_dir() {
+    if (!custom_cache_location.empty()) {
+        mkdir(custom_cache_location.c_str(), 0755);
+        return custom_cache_location;
+    }
+
     const char* home = getenv("HOME");
     if (!home) home = "/tmp";
     std::string dir = std::string(home) + "/Library/Caches/cactus/telemetry";
@@ -714,7 +721,7 @@ static bool send_batch_to_cloud(const std::vector<Event>& local) {
         if (!cloud_key.empty()) {
             payload << "\"cloud_key\":\"" << cloud_key << "\",";
         }
-        payload << "\"framework\":\"cpp\",";
+        payload << "\"framework\":\"" << framework << "\",";
         if (!cactus_version.empty()) {
             payload << "\"framework_version\":\"" << cactus_version << "\",";
         }
@@ -912,6 +919,16 @@ void setEnabled(bool en) {
 
 void setCloudDisabled(bool disabled) {
     cloud_disabled.store(disabled);
+}
+
+void setTelemetryEnvironment(const char* framework_str, const char* cache_location_str) {
+    if (framework_str && framework_str[0] != '\0') {
+        framework = framework_str;
+    }
+
+    if (cache_location_str && cache_location_str[0] != '\0') {
+        custom_cache_location = cache_location_str;
+    }
 }
 
 void recordInit(const char* model, bool success, double response_time_ms, const char* message) {
