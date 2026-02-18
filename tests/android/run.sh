@@ -2,6 +2,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CACTUS_CURL_ROOT="${CACTUS_CURL_ROOT:-$PROJECT_ROOT/libs/curl}"
+export CACTUS_CURL_ROOT
 
 MODEL_NAME="$1"
 TRANSCRIBE_MODEL_NAME="$2"
@@ -290,6 +292,7 @@ for test_exe in "${test_executables[@]}"; do
         export CACTUS_TEST_VAD_MODEL=$device_model_dir/$vad_model_dir && \
         export CACTUS_TEST_ASSETS=$device_assets_dir/assets && \
         export CACTUS_INDEX_PATH=$device_assets_dir/assets && \
+        export CACTUS_NO_CLOUD_TELE=${CACTUS_NO_CLOUD_TELE} && \
         ./$test_name"
 done
 
