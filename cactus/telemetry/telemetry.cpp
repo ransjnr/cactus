@@ -91,6 +91,7 @@ static std::string model_basename(const char* model_path) {
 static std::string event_type_to_string(EventType t);
 static bool event_type_from_string(const std::string& s, EventType& t);
 static bool extract_string_field(const std::string& line, const std::string& key, std::string& out);
+static bool extract_json_field(const std::string& line, const std::string& key, std::string& out);
 static bool extract_bool_field(const std::string& line, const std::string& key, bool& out);
 static bool extract_double_field(const std::string& line, const std::string& key, double& out);
 static bool extract_int_field(const std::string& line, const std::string& key, int& out);
@@ -287,7 +288,7 @@ static bool parse_event_line(const std::string& line, Event& out) {
     std::string error;
     extract_string_field(line, "error", error);
     std::string function_calls;
-    extract_string_field(line, "function_calls", function_calls);
+    extract_json_field(line, "function_calls", function_calls);
     double ts_ms = 0.0;
     if (!extract_double_field_raw(line, "ts_ms", ts_ms)) {
         extract_double_field(line, "ts_ms", ts_ms);
@@ -356,6 +357,57 @@ static bool extract_string_field(const std::string& line, const std::string& key
         out = line.substr(pos, end - pos);
         return true;
     }
+    size_t end = line.find_first_of(",}", pos);
+    if (end == std::string::npos) end = line.size();
+    out = line.substr(pos, end - pos);
+    if (out == "null") out.clear();
+    return true;
+}
+
+static bool extract_json_field(const std::string& line, const std::string& key, std::string& out) {
+    std::string needle = "\"" + key + "\":";
+    size_t pos = line.find(needle);
+    if (pos == std::string::npos) return false;
+    pos += needle.size();
+    while (pos < line.size() && line[pos] == ' ') pos++;
+    if (pos >= line.size()) return false;
+
+    char start_char = line[pos];
+    if (start_char == '[' || start_char == '{') {
+        char end_char = (start_char == '[') ? ']' : '}';
+        int depth = 0;
+        size_t end = pos;
+        bool in_string = false;
+        bool escape_next = false;
+
+        for (; end < line.size(); end++) {
+            if (escape_next) {
+                escape_next = false;
+                continue;
+            }
+            if (line[end] == '\\') {
+                escape_next = true;
+                continue;
+            }
+            if (line[end] == '"') {
+                in_string = !in_string;
+                continue;
+            }
+            if (in_string) continue;
+
+            if (line[end] == start_char) {
+                depth++;
+            } else if (line[end] == end_char) {
+                depth--;
+                if (depth == 0) {
+                    out = line.substr(pos, end - pos + 1);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     size_t end = line.find_first_of(",}", pos);
     if (end == std::string::npos) end = line.size();
     out = line.substr(pos, end - pos);
@@ -738,6 +790,8 @@ static bool send_batch_to_cloud(const std::vector<Event>& local) {
         payload << "\"device_id\":\"" << device_id << "\"";
         if (e.message[0] != '\0') {
             payload << ",\"message\":\"" << escape_json_string(e.message) << "\"";
+        } else {
+            payload << ",\"message\":null";
         }
         if (e.error[0] != '\0') {
             payload << ",\"error\":\"" << escape_json_string(e.error) << "\"";
@@ -806,6 +860,8 @@ static void write_events_to_cache(const std::vector<Event>& local) {
         oss << ",\"ts_ms\":" << std::chrono::duration_cast<std::chrono::milliseconds>(e.timestamp.time_since_epoch()).count();
         if (e.message[0] != '\0') {
             oss << ",\"message\":\"" << escape_json_string(e.message) << "\"";
+        } else {
+            oss << ",\"message\":null";
         }
         if (e.error[0] != '\0') {
             oss << ",\"error\":\"" << escape_json_string(e.error) << "\"";
