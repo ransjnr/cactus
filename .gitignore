@@ -6,6 +6,8 @@ build
 weights/
 stage/
 .cache/
+third_party/
+tests/build_et/
 
 android/build/
 android/libs/

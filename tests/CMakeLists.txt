@@ -1,9 +1,128 @@
-cmake_minimum_required(VERSION 3.10)
-project(CactusTests LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.16)
+project(CactusTests LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+# ─── Framework options ───────────────────────────────────────────────
+option(WITH_LITERT "Build with LiteRT for matmul benchmarks (requires network on first build)" OFF)
+option(WITH_GGML "Build with GGML for Q4_0 matmul benchmarks" OFF)
+option(WITH_EXECUTORCH "Build with Executorch for matmul benchmarks" OFF)
+option(WITH_MLX "Build with MLX for matmul benchmarks (Apple-only)" OFF)
+option(WITH_MLC "Build with MLC for matmul benchmarks" OFF)
+option(WITH_ONNXRT "Build with ONNX Runtime for matmul benchmarks" OFF)
+
+# ─── LiteRT setup ───────────────────────────────────────────────────
+if(WITH_LITERT)
+    set(LITERT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/litert)
+
+    # Pre-populate FlatBuffers v24 before tflite loads — LiteRT main ships v25
+    # but fetches TF v2.19 whose schema_generated.h requires v24.
+    include(FetchContent)
+    set(FLATBUFFERS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        flatbuffers
+        GIT_REPOSITORY https://github.com/google/flatbuffers
+        GIT_TAG v24.12.23
+        GIT_SHALLOW TRUE
+        SOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/flatbuffers"
+    )
+    FetchContent_Populate(flatbuffers)
+    add_subdirectory("${flatbuffers_SOURCE_DIR}" "${flatbuffers_BINARY_DIR}" EXCLUDE_FROM_ALL)
+    # Build host flatc compiler for tflite schema generation
+    include(ExternalProject)
+    ExternalProject_Add(flatbuffers-flatc
+        PREFIX ${CMAKE_CURRENT_BINARY_DIR}/flatbuffers-flatc
+        SOURCE_DIR ${flatbuffers_SOURCE_DIR}
+        CMAKE_ARGS -DFLATBUFFERS_BUILD_TESTS=OFF
+                   -DFLATBUFFERS_BUILD_FLATLIB=OFF
+                   -DFLATBUFFERS_STATIC_FLATC=OFF
+                   -DFLATBUFFERS_BUILD_FLATHASH=OFF
+        INSTALL_COMMAND ""
+        EXCLUDE_FROM_ALL TRUE
+    )
+    set(FLATBUFFERS_FLATC_EXECUTABLE
+        "${CMAKE_CURRENT_BINARY_DIR}/flatbuffers-flatc/src/flatbuffers-flatc-build/flatc"
+        CACHE STRING "" FORCE)
+
+    set(TFLITE_ENABLE_XNNPACK OFF CACHE BOOL "" FORCE)
+    set(TFLITE_ENABLE_GPU OFF CACHE BOOL "" FORCE)
+    set(TFLITE_ENABLE_NNAPI OFF CACHE BOOL "" FORCE)
+    set(TFLITE_ENABLE_EXTERNAL_DELEGATE OFF CACHE BOOL "" FORCE)
+    set(TFLITE_ENABLE_RUY ON CACHE BOOL "" FORCE)
+    # Configure tflite subdirectory to pull in dependencies (ruy, Eigen, etc.)
+    # but don't build the full tensorflow-lite library (has flatbuffers schema
+    # version conflicts). We only need the kernel sources.
+    add_subdirectory(${LITERT_DIR}/tflite ${CMAKE_CURRENT_BINARY_DIR}/tflite EXCLUDE_FROM_ALL)
+
+    # Minimal library: NEON int8 matmul kernels + 4-bit FC kernels and their deps.
+    add_library(litert_kernels STATIC
+        ${LITERT_DIR}/tflite/kernels/internal/optimized/neon_tensor_utils.cc
+        ${LITERT_DIR}/tflite/kernels/internal/optimized/cpu_check.cc
+        ${LITERT_DIR}/tflite/kernels/internal/reference/portable_tensor_utils.cc
+        ${LITERT_DIR}/tflite/kernels/internal/common.cc
+        ${LITERT_DIR}/tflite/kernels/internal/quantization_util.cc
+        ${LITERT_DIR}/tflite/kernels/cpu_backend_context.cc
+        ${LITERT_DIR}/tflite/kernels/internal/optimized/4bit/neon_fully_connected.cc
+        ${LITERT_DIR}/tflite/kernels/internal/optimized/4bit/neon_fully_connected_aarch64_sdot.cc
+        ${LITERT_DIR}/tflite/kernels/internal/optimized/4bit/neon_fully_connected_aarch64_nosdot.cc
+        ${LITERT_DIR}/tflite/kernels/internal/optimized/4bit/fully_connected_reference.cc
+    )
+    target_include_directories(litert_kernels PUBLIC
+        ${LITERT_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/tflite/tensorflow-src
+        ${CMAKE_CURRENT_BINARY_DIR}/cpuinfo
+    )
+    target_link_libraries(litert_kernels PUBLIC
+        Eigen3::Eigen
+        ruy::ruy
+        gemmlowp::gemmlowp
+        cpuinfo::cpuinfo
+    )
+    target_compile_options(litert_kernels PRIVATE -O3 -DTFLITE_WITH_RUY -DFC_4BIT_NEON)
+    message(STATUS "LiteRT enabled from ${LITERT_DIR}")
+endif()
+
+# ─── GGML setup ──────────────────────────────────────────────────────
+if(WITH_GGML)
+    set(GGML_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/ggml)
+    set(GGML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GGML_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${GGML_DIR} ${CMAKE_CURRENT_BINARY_DIR}/ggml EXCLUDE_FROM_ALL)
+    message(STATUS "GGML enabled from ${GGML_DIR}")
+endif()
+
+# ─── MLX setup ────────────────────────────────────────────────────────
+if(WITH_MLX)
+    if(NOT APPLE)
+        message(FATAL_ERROR "MLX requires macOS (Metal framework)")
+    endif()
+    set(MLX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/mlx)
+    set(MLX_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(MLX_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(MLX_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${MLX_DIR} ${CMAKE_CURRENT_BINARY_DIR}/mlx EXCLUDE_FROM_ALL)
+    message(STATUS "MLX enabled from ${MLX_DIR}")
+endif()
+
+# ─── Executorch/XNNPACK setup ────────────────────────────────────────
+if(WITH_EXECUTORCH)
+    include(FetchContent)
+    set(XNNPACK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(XNNPACK_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    set(XNNPACK_LIBRARY_TYPE "static" CACHE STRING "" FORCE)
+    FetchContent_Declare(
+        xnnpack
+        GIT_REPOSITORY https://github.com/google/XNNPACK
+        GIT_TAG master
+        GIT_SHALLOW TRUE
+        SOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/xnnpack-src"
+    )
+    FetchContent_MakeAvailable(xnnpack)
+    message(STATUS "Executorch XNNPACK enabled")
+endif()
+
+# ─── Platform setup ─────────────────────────────────────────────────
 function(cactus_require_vendored_curl include_dir library_path platform_label)
     if(NOT EXISTS "${include_dir}/curl/curl.h" OR NOT EXISTS "${library_path}")
         message(WARNING "==============================================================================")
@@ -29,12 +148,12 @@ endif()
 set(CACTUS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../cactus)
 set(CACTUS_BUILD_DIR ${CACTUS_ROOT}/build)
 
-find_library(CACTUS_LIB 
+find_library(CACTUS_LIB
     NAMES cactus
     PATHS ${CACTUS_BUILD_DIR} ${CACTUS_BUILD_DIR}/lib
     REQUIRED
 )
- 
+
 set(MMAN_LIB "")
 if(NOT APPLE)
     find_library(MMAN_LIB mman)
@@ -58,15 +177,110 @@ else()
     message(STATUS "SDL2 not found; microphone tests will be skipped")
 endif()
 
+# ─── Benchmark comparison suite (bench_lib) ──────────────────────────
+add_library(bench_lib OBJECT
+    bench/bench_common.cpp
+    bench/bench_driver.cpp
+    bench/backend_cactus_int8.cpp
+    # bench/backend_cactus_int4.cpp  # uncomment when cactus_matmul_int4 lands in kernel
+    bench/backend_executorch.cpp
+    bench/backend_mlx.cpp
+    bench/backend_mlc.cpp
+    bench/backend_onnxrt.cpp
+)
+target_include_directories(bench_lib PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CACTUS_ROOT}
+)
+target_link_libraries(bench_lib PUBLIC ${CACTUS_LIB})
+
+if(WITH_LITERT)
+    target_sources(bench_lib PRIVATE
+        bench/backend_litert_int8.cpp
+        bench/backend_litert_int4.cpp
+    )
+    target_link_libraries(bench_lib PUBLIC litert_kernels)
+    target_compile_definitions(bench_lib PRIVATE FC_4BIT_NEON)
+endif()
+
+if(WITH_GGML)
+    target_sources(bench_lib PRIVATE bench/backend_ggml.cpp bench/backend_ggml_int8.cpp)
+    target_link_libraries(bench_lib PUBLIC ggml)
+endif()
+
+if(WITH_EXECUTORCH)
+    target_link_libraries(bench_lib PUBLIC XNNPACK)
+    target_compile_definitions(bench_lib PRIVATE WITH_EXECUTORCH)
+endif()
+
+if(WITH_MLX)
+    target_link_libraries(bench_lib PUBLIC mlx)
+    target_compile_definitions(bench_lib PRIVATE WITH_MLX)
+endif()
+
+if(WITH_MLC)
+    set(MLC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/mlc)
+    set(TVM_DIR ${MLC_DIR}/3rdparty/tvm)
+    set(TVM_FFI_DIR ${TVM_DIR}/3rdparty/tvm-ffi)
+    find_library(TVM_RUNTIME_LIB tvm_runtime PATHS ${TVM_DIR}/build/lib ${TVM_DIR}/build REQUIRED)
+    find_library(TVM_FFI_LIB tvm_ffi PATHS ${TVM_DIR}/build/lib ${TVM_DIR}/build REQUIRED)
+    target_include_directories(bench_lib PRIVATE
+        ${TVM_DIR}/include
+        ${TVM_FFI_DIR}/include
+        ${TVM_FFI_DIR}/3rdparty/dlpack/include
+        ${TVM_DIR}/3rdparty/dmlc-core/include)
+    target_link_libraries(bench_lib PUBLIC ${TVM_RUNTIME_LIB} ${TVM_FFI_LIB})
+    target_compile_definitions(bench_lib PRIVATE WITH_MLC)
+    message(STATUS "MLC/TVM runtime enabled from ${MLC_DIR}")
+endif()
+
+if(WITH_ONNXRT)
+    set(ONNXRT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/onnxruntime)
+    find_library(ONNXRT_LIB onnxruntime PATHS ${ONNXRT_DIR}/lib REQUIRED)
+    target_include_directories(bench_lib PRIVATE ${ONNXRT_DIR}/include)
+    target_link_libraries(bench_lib PUBLIC ${ONNXRT_LIB})
+    target_compile_definitions(bench_lib PRIVATE WITH_ONNXRT)
+    message(STATUS "ONNX Runtime enabled from ${ONNXRT_DIR}")
+endif()
+
+# Unified matmul benchmark executable
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test_matmul_bench.cpp")
+    add_executable(test_matmul_bench test_matmul_bench.cpp test_utils.cpp)
+    target_link_libraries(test_matmul_bench PRIVATE bench_lib)
+    target_include_directories(test_matmul_bench PRIVATE ${CACTUS_ROOT})
+    if(WITH_MLC)
+        target_link_libraries(test_matmul_bench PRIVATE ${TVM_RUNTIME_LIB} ${TVM_FFI_LIB})
+    endif()
+    if(MMAN_LIB)
+        target_link_libraries(test_matmul_bench PRIVATE ${MMAN_LIB})
+    endif()
+    if(APPLE)
+        target_link_libraries(test_matmul_bench PRIVATE ${CACTUS_CURL_LIBRARY_MACOS})
+        target_include_directories(test_matmul_bench PRIVATE ${CACTUS_CURL_INCLUDE_DIR})
+        target_link_libraries(test_matmul_bench PRIVATE
+            ${COREML_FRAMEWORK}
+            ${FOUNDATION_FRAMEWORK}
+            ${SECURITY_FRAMEWORK}
+            ${SYSTEMCONFIGURATION_FRAMEWORK}
+            ${CFNETWORK_FRAMEWORK}
+        )
+    endif()
+    message(STATUS "Added benchmark: test_matmul_bench")
+endif()
+
+# ─── Standard tests (one executable per test_*.cpp) ──────────────────
 file(GLOB TEST_SOURCES "test_*.cpp")
 list(REMOVE_ITEM TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/test_utils.cpp")
+# Exclude old litert benchmarks (replaced by unified test_matmul_bench)
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*test_litert.*matmul_bench\\.cpp$")
+# Exclude test_matmul_bench (built separately above with bench_lib)
+list(REMOVE_ITEM TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/test_matmul_bench.cpp")
 
 foreach(TEST_FILE ${TEST_SOURCES})
 
     get_filename_component(TEST_NAME ${TEST_FILE} NAME_WE)
     add_executable(${TEST_NAME} ${TEST_FILE} test_utils.cpp)
     target_link_libraries(${TEST_NAME} PRIVATE ${CACTUS_LIB})
-
 
     if(MMAN_LIB)
         target_link_libraries(${TEST_NAME} PRIVATE ${MMAN_LIB})
@@ -85,6 +299,7 @@ foreach(TEST_FILE ${TEST_SOURCES})
         target_include_directories(${TEST_NAME} PRIVATE ${CACTUS_CURL_INCLUDE_DIR})
         message(STATUS "Test ${TEST_NAME} will link with libcurl")
     endif()
+
     if(APPLE)
         target_link_libraries(${TEST_NAME} PRIVATE
             ${COREML_FRAMEWORK}
@@ -115,6 +330,7 @@ foreach(APP_NAME chat asr)
             target_link_libraries(${APP_NAME} PRIVATE ${CACTUS_CURL_LIBRARY_MACOS})
             target_include_directories(${APP_NAME} PRIVATE ${CACTUS_CURL_INCLUDE_DIR})
         endif()
+
         if(APPLE)
             target_link_libraries(${APP_NAME} PRIVATE
                 ${COREML_FRAMEWORK}
