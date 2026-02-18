@@ -12,7 +12,9 @@
 #include <vector>
 #include <sys/stat.h>
 #include <sys/utsname.h>
+#if defined(__APPLE__)
 #include <sys/sysctl.h>
+#endif
 #include <curl/curl.h>
 #include <dirent.h>
 #include <functional>
@@ -63,6 +65,9 @@ static std::string device_model;
 static std::string device_os;
 static std::string device_os_version;
 static std::string device_brand;
+static std::string cactus_version;
+static std::string framework = "cpp";
+static std::string custom_cache_location;
 static std::string device_registered_file;
 static std::string project_registered_file;
 static std::atomic<bool> device_registered{false};
@@ -86,12 +91,31 @@ static std::string model_basename(const char* model_path) {
 static std::string event_type_to_string(EventType t);
 static bool event_type_from_string(const std::string& s, EventType& t);
 static bool extract_string_field(const std::string& line, const std::string& key, std::string& out);
+static bool extract_json_field(const std::string& line, const std::string& key, std::string& out);
 static bool extract_bool_field(const std::string& line, const std::string& key, bool& out);
 static bool extract_double_field(const std::string& line, const std::string& key, double& out);
 static bool extract_int_field(const std::string& line, const std::string& key, int& out);
 static bool extract_double_field_raw(const std::string& line, const std::string& key, double& out);
 
+static void mkdir_p(const std::string& path) {
+    if (path.empty()) return;
+
+    std::string current;
+    for (size_t i = 0; i < path.size(); ++i) {
+        current += path[i];
+        if (path[i] == '/' && i > 0) {
+            mkdir(current.c_str(), 0755);
+        }
+    }
+    mkdir(path.c_str(), 0755);
+}
+
 static std::string get_telemetry_dir() {
+    if (!custom_cache_location.empty()) {
+        mkdir_p(custom_cache_location);
+        return custom_cache_location;
+    }
+
     const char* home = getenv("HOME");
     if (!home) home = "/tmp";
     std::string dir = std::string(home) + "/Library/Caches/cactus/telemetry";
@@ -144,12 +168,17 @@ static void persist_registered_flag(const std::string& file) {
 }
 
 static std::string sysctl_string(const char* key) {
+#if defined(__APPLE__)
     size_t size = 0;
     if (sysctlbyname(key, nullptr, &size, nullptr, 0) != 0 || size == 0) return {};
     std::string out(size, '\0');
     if (sysctlbyname(key, out.data(), &size, nullptr, 0) != 0) return {};
     if (!out.empty() && out.back() == '\0') out.pop_back();
     return out;
+#else
+    (void)key;
+    return {};
+#endif
 }
 
 static Event make_event(EventType type, const char* model, bool success, double ttft_ms, double tps, double response_time_ms, int tokens, const char* message) {
@@ -197,6 +226,10 @@ static Event make_event_extended(EventType type, const char* model, const Comple
     e.tokens = static_cast<int>(metrics.prefill_tokens + metrics.decode_tokens);
     e.prefill_tokens = static_cast<int>(metrics.prefill_tokens);
     e.decode_tokens = static_cast<int>(metrics.decode_tokens);
+    e.session_ttft_ms = 0.0;
+    e.session_tps = 0.0;
+    e.session_time_ms = 0.0;
+    e.session_tokens = 0;
     e.timestamp = std::chrono::system_clock::now();
     std::memset(e.model, 0, sizeof(e.model));
     std::memset(e.message, 0, sizeof(e.message));
@@ -255,7 +288,7 @@ static bool parse_event_line(const std::string& line, Event& out) {
     std::string error;
     extract_string_field(line, "error", error);
     std::string function_calls;
-    extract_string_field(line, "function_calls", function_calls);
+    extract_json_field(line, "function_calls", function_calls);
     double ts_ms = 0.0;
     if (!extract_double_field_raw(line, "ts_ms", ts_ms)) {
         extract_double_field(line, "ts_ms", ts_ms);
@@ -324,6 +357,57 @@ static bool extract_string_field(const std::string& line, const std::string& key
         out = line.substr(pos, end - pos);
         return true;
     }
+    size_t end = line.find_first_of(",}", pos);
+    if (end == std::string::npos) end = line.size();
+    out = line.substr(pos, end - pos);
+    if (out == "null") out.clear();
+    return true;
+}
+
+static bool extract_json_field(const std::string& line, const std::string& key, std::string& out) {
+    std::string needle = "\"" + key + "\":";
+    size_t pos = line.find(needle);
+    if (pos == std::string::npos) return false;
+    pos += needle.size();
+    while (pos < line.size() && line[pos] == ' ') pos++;
+    if (pos >= line.size()) return false;
+
+    char start_char = line[pos];
+    if (start_char == '[' || start_char == '{') {
+        char end_char = (start_char == '[') ? ']' : '}';
+        int depth = 0;
+        size_t end = pos;
+        bool in_string = false;
+        bool escape_next = false;
+
+        for (; end < line.size(); end++) {
+            if (escape_next) {
+                escape_next = false;
+                continue;
+            }
+            if (line[end] == '\\') {
+                escape_next = true;
+                continue;
+            }
+            if (line[end] == '"') {
+                in_string = !in_string;
+                continue;
+            }
+            if (in_string) continue;
+
+            if (line[end] == start_char) {
+                depth++;
+            } else if (line[end] == end_char) {
+                depth--;
+                if (depth == 0) {
+                    out = line.substr(pos, end - pos + 1);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     size_t end = line.find_first_of(",}", pos);
     if (end == std::string::npos) end = line.size();
     out = line.substr(pos, end - pos);
@@ -430,17 +514,94 @@ static std::string format_timestamp(const std::chrono::system_clock::time_point&
     return true;
 }
 
+static std::string escape_json_string(const char* str) {
+    if (!str) return "";
+    std::string result;
+    result.reserve(std::strlen(str));
+    for (const char* p = str; *p; ++p) {
+        switch (*p) {
+            case '"':  result += "\\\""; break;
+            case '\\': result += "\\\\"; break;
+            case '\b': result += "\\b"; break;
+            case '\f': result += "\\f"; break;
+            case '\n': result += "\\n"; break;
+            case '\r': result += "\\r"; break;
+            case '\t': result += "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(*p) < 0x20) {
+                    char buf[7];
+                    snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(*p));
+                    result += buf;
+                } else {
+                    result += *p;
+                }
+                break;
+        }
+    }
+    return result;
+}
+
 static void collect_device_info() {
     struct utsname u;
     if (uname(&u) == 0) {
+        const std::string sysname = u.sysname;
+        device_os = (sysname == "Darwin") ? "macos" : sysname;
+        device_model = u.machine;
+        device_os_version = u.release;
+        device_brand = "unknown";
+#if defined(__APPLE__)
         // Prefer user-facing macOS info over Darwin kernel version.
         std::string hw_model = sysctl_string("hw.model");
         std::string os_product = sysctl_string("kern.osproductversion");
-        device_os = (std::string(u.sysname) == "Darwin") ? "macos" : u.sysname;
-        device_os_version = !os_product.empty() ? os_product : u.release;
-        device_model = !hw_model.empty() ? hw_model : u.machine;
+        if (!hw_model.empty()) device_model = hw_model;
+        if (!os_product.empty()) device_os_version = os_product;
         device_brand = "apple";
+#elif defined(__ANDROID__)
+        device_brand = "android";
+#endif
     }
+}
+
+static void read_cactus_version() {
+    const char* version_paths[] = {
+        "CACTUS_VERSION",
+        "../CACTUS_VERSION",
+        "../../CACTUS_VERSION",
+        "../../../CACTUS_VERSION"
+    };
+
+    for (const char* path : version_paths) {
+        std::ifstream file(path);
+        if (file.is_open()) {
+            std::string line;
+            if (std::getline(file, line)) {
+                size_t start = line.find_first_not_of(" \t\r\n");
+                size_t end = line.find_last_not_of(" \t\r\n");
+                if (start != std::string::npos && end != std::string::npos) {
+                    cactus_version = line.substr(start, end - start + 1);
+                    return;
+                }
+            }
+        }
+    }
+
+    cactus_version = "";
+}
+
+static void apply_curl_tls_trust(CURL* curl) {
+    if (!curl) return;
+    const char* ca_bundle = std::getenv("CACTUS_CA_BUNDLE");
+    if (ca_bundle && ca_bundle[0] != '\0') {
+        curl_easy_setopt(curl, CURLOPT_CAINFO, ca_bundle);
+    }
+#if defined(__ANDROID__)
+    const char* ca_path = std::getenv("CACTUS_CA_PATH");
+    if (ca_path && ca_path[0] != '\0') {
+        curl_easy_setopt(curl, CURLOPT_CAPATH, ca_path);
+    } else {
+        curl_easy_setopt(curl, CURLOPT_CAPATH, "/system/etc/security/cacerts");
+    }
+#endif
 }
 
 static bool ensure_project_row(CURL* curl) {
@@ -448,11 +609,7 @@ static bool ensure_project_row(CURL* curl) {
     std::string url = supabase_url + "/rest/v1/projects";
     std::ostringstream payload;
     payload << "[{";
-    payload << "\"id\":\"" << project_id << "\"";
-    payload << ",\"project_key\":\"" << project_id << "\"";
-    if (!cloud_key.empty()) {
-        payload << ",\"cloud_key\":\"" << cloud_key << "\"";
-    }
+    payload << "\"project_key\":\"" << project_id << "\"";
     if (!project_scope.empty()) {
         payload << ",\"name\":\"" << project_scope << "\"";
     }
@@ -475,6 +632,7 @@ static bool ensure_project_row(CURL* curl) {
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    apply_curl_tls_trust(curl);
     CURLcode res = curl_easy_perform(curl);
     long code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
@@ -521,6 +679,7 @@ static bool ensure_device_row(CURL* curl) {
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    apply_curl_tls_trust(curl);
     CURLcode res = curl_easy_perform(curl);
     long code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
@@ -551,6 +710,7 @@ static bool send_payload(CURL* curl, const std::string& url, const std::string& 
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    apply_curl_tls_trust(curl);
     CURLcode res = curl_easy_perform(curl);
     long code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
@@ -576,7 +736,7 @@ static bool send_batch_to_cloud(const std::vector<Event>& local) {
         const Event& e = local[i];
         payload << "{";
         payload << "\"event_type\":\"" << event_type_to_string(e.type) << "\",";
-        payload << "\"model\":\"" << e.model << "\",";
+        payload << "\"model\":\"" << escape_json_string(e.model) << "\",";
         payload << "\"success\":" << (e.success ? "true" : "false") << ",";
         payload << "\"cloud_handoff\":" << (e.cloud_handoff ? "true" : "false") << ",";
         if (e.type == INIT || !e.success) {
@@ -621,15 +781,20 @@ static bool send_batch_to_cloud(const std::vector<Event>& local) {
             payload << "\"project_id\":\"" << project_id << "\",";
         }
         if (!cloud_key.empty()) {
-            payload << "\"cloud_key\":\"" << cloud_key << "\",";
+            payload << "\"key_hash\":\"" << cloud_key << "\",";
         }
-        payload << "\"framework\":\"cpp\",";
+        payload << "\"framework\":\"" << framework << "\",";
+        if (!cactus_version.empty()) {
+            payload << "\"framework_version\":\"" << cactus_version << "\",";
+        }
         payload << "\"device_id\":\"" << device_id << "\"";
         if (e.message[0] != '\0') {
-            payload << ",\"message\":\"" << e.message << "\"";
+            payload << ",\"message\":\"" << escape_json_string(e.message) << "\"";
+        } else {
+            payload << ",\"message\":null";
         }
         if (e.error[0] != '\0') {
-            payload << ",\"error\":\"" << e.error << "\"";
+            payload << ",\"error\":\"" << escape_json_string(e.error) << "\"";
         } else {
             payload << ",\"error\":null";
         }
@@ -652,7 +817,7 @@ static void write_events_to_cache(const std::vector<Event>& local) {
     for (const auto &e : local) {
         std::ostringstream oss;
         oss << "{\"event_type\":\"" << event_type_to_string(e.type) << "\",";
-        oss << "\"model\":\"" << e.model << "\",";
+        oss << "\"model\":\"" << escape_json_string(e.model) << "\",";
         oss << "\"success\":" << (e.success ? "true" : "false") << ",";
         oss << "\"cloud_handoff\":" << (e.cloud_handoff ? "true" : "false") << ",";
         if (e.type == INIT || !e.success) {
@@ -694,10 +859,12 @@ static void write_events_to_cache(const std::vector<Event>& local) {
         }
         oss << ",\"ts_ms\":" << std::chrono::duration_cast<std::chrono::milliseconds>(e.timestamp.time_since_epoch()).count();
         if (e.message[0] != '\0') {
-            oss << ",\"message\":\"" << e.message << "\"";
+            oss << ",\"message\":\"" << escape_json_string(e.message) << "\"";
+        } else {
+            oss << ",\"message\":null";
         }
         if (e.error[0] != '\0') {
-            oss << ",\"error\":\"" << e.error << "\"";
+            oss << ",\"error\":\"" << escape_json_string(e.error) << "\"";
         } else {
             oss << ",\"error\":null";
         }
@@ -802,6 +969,7 @@ void init(const char* project_id_param, const char* project_scope, const char* c
     device_registered.store(load_registered_flag(device_flag_file));
     device_id = load_or_create_id(device_file);
     collect_device_info();
+    read_cactus_version();
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     if (!atexit_registered.exchange(true)) {
@@ -817,6 +985,22 @@ void setEnabled(bool en) {
 
 void setCloudDisabled(bool disabled) {
     cloud_disabled.store(disabled);
+}
+
+void setTelemetryEnvironment(const char* framework_str, const char* cache_location_str) {
+    if (framework_str && framework_str[0] != '\0') {
+        framework = framework_str;
+    }
+
+    if (cache_location_str && cache_location_str[0] != '\0') {
+        custom_cache_location = cache_location_str;
+    }
+}
+
+void setCloudKey(const char* key) {
+    if (key && key[0] != '\0') {
+        cloud_key = key;
+    }
 }
 
 void recordInit(const char* model, bool success, double response_time_ms, const char* message) {

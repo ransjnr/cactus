@@ -5,8 +5,10 @@
 #include "../../libs/audio/wav.h"
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 #include <cmath>
 #include <algorithm>
+#include <cctype>
 
 using namespace cactus::engine;
 using namespace cactus::ffi;
@@ -108,6 +110,26 @@ int cactus_transcribe(
             force_tools, tool_rag_top_k, confidence_threshold,
             include_stop_sequences, use_vad, telemetry_enabled
         );
+        {
+            const std::string opts = options_json ? options_json : "";
+            size_t pos = opts.find("\"cloud_handoff_threshold\"");
+            if (pos != std::string::npos) {
+                pos = opts.find(':', pos);
+                if (pos != std::string::npos) {
+                    ++pos;
+                    while (pos < opts.size() && std::isspace(static_cast<unsigned char>(opts[pos]))) ++pos;
+                    try {
+                        cloud_handoff_threshold = std::stof(opts.substr(pos));
+                    } catch (...) {}
+                }
+            }
+        }
+
+        const char* force_handoff_env = std::getenv("CACTUS_FORCE_HANDOFF");
+        if (force_handoff_env && force_handoff_env[0] == '1' && force_handoff_env[1] == '\0') {
+            cloud_handoff_threshold = 0.0001f;
+        }
+
         (void)telemetry_enabled;
 
         bool is_moonshine = handle->model->get_config().model_type == cactus::engine::Config::ModelType::MOONSHINE;
