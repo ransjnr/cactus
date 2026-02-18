@@ -351,7 +351,6 @@ def cmd_build(args):
 
     cactus_dir = PROJECT_ROOT / "cactus"
     lib_path = cactus_dir / "build" / "libcactus.a"
-    vendored_curl = PROJECT_ROOT / "libs" / "curl" / "macos" / "libcurl.a"
 
     print_color(YELLOW, "Building Cactus library...")
     build_script = cactus_dir / "build.sh"
@@ -377,10 +376,7 @@ def cmd_build(args):
     is_darwin = platform.system() == "Darwin"
 
     if is_darwin:
-        if not vendored_curl.exists():
-            print_color(RED, f"Error: vendored libcurl not found at {vendored_curl}")
-            print("Build it first and place it in libs/curl/macos/libcurl.a")
-            return 1
+        # Use system libcurl on macOS (via SDK) instead of vendored version
         compiler = "clang++"
         cmd = [
             compiler, "-std=c++20", "-O3",
@@ -388,7 +384,7 @@ def cmd_build(args):
             str(chat_cpp),
             str(lib_path),
             "-o", "chat",
-            str(vendored_curl),
+            "-lcurl",  # Use system libcurl
             "-framework", "Accelerate",
             "-framework", "CoreML",
             "-framework", "Foundation",
@@ -464,7 +460,7 @@ def cmd_build(args):
                 str(asr_cpp),
                 str(lib_path),
                 "-o", "asr",
-                str(vendored_curl),
+                "-lcurl",  # Use system libcurl
                 "-framework", "Accelerate",
                 "-framework", "CoreML",
                 "-framework", "Foundation",
@@ -661,11 +657,32 @@ def cmd_run(args):
         print_color(RED, f"Error: Chat binary not found at {chat_binary}")
         return 1
 
+    # Check if tools were specified
+    tools_path = getattr(args, 'tools', None)
+    if tools_path:
+        tools_abs = Path(tools_path).resolve()
+        if not tools_abs.exists():
+            print_color(RED, f"Error: Tools file not found: {tools_path}")
+            return 1
+        # Check if Flask is installed
+        try:
+            import flask
+        except ImportError:
+            print_color(RED, "Error: Flask is required for tool support")
+            print("Install with: pip install flask")
+            return 1
+
     os.system('clear' if platform.system() != 'Windows' else 'cls')
     print_color(GREEN, f"Starting Cactus Chat with model: {model_id}")
+    if tools_path:
+        print_color(BLUE, f"Tools enabled: {tools_path}")
     print()
 
-    os.execv(str(chat_binary), [str(chat_binary), str(weights_dir)])
+    cmd_args = [str(chat_binary), str(weights_dir)]
+    if tools_path:
+        cmd_args.append(str(Path(tools_path).resolve()))
+
+    os.execv(str(chat_binary), cmd_args)
 
 
 DEFAULT_ASR_MODEL_ID = "openai/whisper-small"
@@ -1145,6 +1162,7 @@ def create_parser():
     Optional flags:
     --precision INT4|INT8|FP16         default: INT8
     --token <token>                    HF token (for gated models)
+    --tools <path>                     enable tool calling (e.g., python/tools/example_tools.py)
     --reconvert                        force model weights reconversion from source
 
   -----------------------------------------------------------------
@@ -1272,6 +1290,7 @@ def create_parser():
                             help='Quantization precision (default: INT8)')
     run_parser.add_argument('--cache-dir', help='Cache directory for HuggingFace models')
     run_parser.add_argument('--token', help='HuggingFace API token')
+    run_parser.add_argument('--tools', help='Path to Python tools module (e.g., python/tools/example_tools.py)')
     run_parser.add_argument('--no-cloud-tele', action='store_true',
                             help='Disable cloud telemetry (write to cache only)')
     run_parser.add_argument('--reconvert', action='store_true',
