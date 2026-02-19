@@ -508,6 +508,84 @@ bool test_cloud_handoff() {
         });
 }
 
+bool test_cloud_handoff_matrix_suite() {
+    std::cout << "\n╔══════════════════════════════════════════╗\n"
+              << "║      CLOUD HANDOFF MATRIX SUITE         ║\n"
+              << "╚══════════════════════════════════════════╝\n";
+
+    if (!g_model_path) {
+        std::cout << "⊘ SKIP │ CACTUS_TEST_MODEL not set\n";
+        return true;
+    }
+
+    const std::string tools = R"([{
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get weather for a location",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "City, State, Country"}
+                },
+                "required": ["location"]
+            }
+        }
+    }, {
+        "type": "function",
+        "function": {
+            "name": "set_alarm",
+            "description": "Set an alarm for a given time",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "hour": {"type": "integer", "description": "Hour to set the alarm for"},
+                    "minute": {"type": "integer", "description": "Minute to set the alarm for"}
+                },
+                "required": ["hour", "minute"]
+            }
+        }
+    }])";
+
+    const std::string text_only = R"([
+        {"role":"system","content":"You are a concise assistant."},
+        {"role":"user","content":"Explain in one sentence what entropy is."}
+    ])";
+
+    const std::string tool_single_turn = R"([
+        {"role":"system","content":"You are a helpful assistant that can use tools."},
+        {"role":"user","content":"What's the weather in San Francisco?"}
+    ])";
+
+    bool ok = true;
+    ok = run_handoff_mode_case(g_model_path, "text_only", text_only, "", true, false) && ok;
+    ok = run_handoff_mode_case(g_model_path, "text_only", text_only, "", false, false) && ok;
+
+    bool ran_vlm = false;
+    if (g_assets_path) {
+        std::string model_path_str(g_model_path ? g_model_path : "");
+        std::string vision_file = model_path_str + "/vision_patch_embedding.weights";
+        std::ifstream vf(vision_file);
+        if (vf.good()) {
+            std::string img_path = std::string(g_assets_path) + "/test_monkey.png";
+            std::string text_image = "[{\"role\":\"user\",\"content\":\"Describe this image in one sentence.\",\"images\":[\"" + img_path + "\"]}]";
+            ok = run_handoff_mode_case(g_model_path, "text_plus_image", text_image, "", true, false) && ok;
+            ok = run_handoff_mode_case(g_model_path, "text_plus_image", text_image, "", false, false) && ok;
+            ran_vlm = true;
+        }
+    }
+    if (!ran_vlm) {
+        std::cout << "├─ text_plus_image [handoff_on]: SKIP (vision model/assets unavailable)\n";
+        std::cout << "├─ text_plus_image [handoff_off]: SKIP (vision model/assets unavailable)\n";
+    }
+
+    ok = run_handoff_mode_case(g_model_path, "tool_single_turn", tool_single_turn, tools, true, true) && ok;
+    ok = run_handoff_mode_case(g_model_path, "tool_single_turn", tool_single_turn, tools, false, true) && ok;
+
+    std::cout << "└─ Matrix result: " << (ok ? "PASSED ✓" : "FAILED ✗") << "\n";
+    return ok;
+}
+
 bool test_1k_context() {
     std::string msg = "[{\"role\": \"system\", \"content\": \"/no_think You are helpful. ";
     for (int i = 0; i < 50; i++) {
@@ -1187,7 +1265,7 @@ int main() {
     runner.run_test("tool_multiple_tool_call_invocations", test_multiple_tool_call_invocations());
     runner.run_test("tool_calls_with_two_tools", test_tool_call_with_two_tools());
     runner.run_test("tool_calls_with_three_tools", test_tool_call_with_three_tools());
-    runner.run_test("cloud_handoff", test_cloud_handoff());
+    runner.run_test("cloud_handoff_matrix_suite", test_cloud_handoff_matrix_suite());
     runner.run_test("vlm_multiturn", test_vlm_multiturn());
     runner.run_test("embeddings", test_embeddings());
     runner.run_test("image_embeddings", test_image_embeddings());

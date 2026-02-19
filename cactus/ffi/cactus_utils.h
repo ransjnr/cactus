@@ -324,17 +324,23 @@ inline void parse_options_json(const std::string& json,
                                float& confidence_threshold,
                                bool& include_stop_sequences,
                                bool& use_vad,
-                               bool& telemetry_enabled) {
+                               bool& telemetry_enabled,
+                               bool* auto_handoff = nullptr,
+                               size_t* cloud_timeout_ms = nullptr,
+                               bool* handoff_with_images = nullptr) {
     temperature = 0.0f;
     top_p = 0.0f;
     top_k = 0;
     max_tokens = 100;
     force_tools = false;
     tool_rag_top_k = 2;
-    confidence_threshold = 0.7f;
+    confidence_threshold = 0.95f;
     include_stop_sequences = false;
     use_vad = true;
     telemetry_enabled = true;
+    if (auto_handoff) *auto_handoff = true;
+    if (cloud_timeout_ms) *cloud_timeout_ms = 15000;
+    if (handoff_with_images) *handoff_with_images = true;
     stop_sequences.clear();
 
     if (json.empty()) return;
@@ -401,6 +407,32 @@ inline void parse_options_json(const std::string& json,
         pos = json.find(':', pos) + 1;
         while (pos < json.length() && std::isspace(json[pos])) pos++;
         telemetry_enabled = (json.substr(pos, 4) == "true");
+    }
+
+    if (auto_handoff) {
+        pos = json.find("\"auto_handoff\"");
+        if (pos != std::string::npos) {
+            pos = json.find(':', pos) + 1;
+            while (pos < json.length() && std::isspace(json[pos])) pos++;
+            *auto_handoff = (json.substr(pos, 4) == "true");
+        }
+    }
+
+    if (cloud_timeout_ms) {
+        pos = json.find("\"cloud_timeout_ms\"");
+        if (pos != std::string::npos) {
+            pos = json.find(':', pos) + 1;
+            *cloud_timeout_ms = std::stoul(json.substr(pos));
+        }
+    }
+
+    if (handoff_with_images) {
+        pos = json.find("\"handoff_with_images\"");
+        if (pos != std::string::npos) {
+            pos = json.find(':', pos) + 1;
+            while (pos < json.length() && std::isspace(json[pos])) pos++;
+            *handoff_with_images = (json.substr(pos, 4) == "true");
+        }
     }
 
     pos = json.find("\"stop_sequences\"");
@@ -645,13 +677,33 @@ inline std::string construct_response_json(const std::string& regular_response,
                                            size_t prompt_tokens,
                                            size_t completion_tokens,
                                            float confidence = 0.0f,
-                                           bool cloud_handoff = false) {
+                                           bool cloud_handoff = false,
+                                           bool success = false,
+                                           const std::string& local_output = "",
+                                           const std::string& response_source = "local",
+                                           bool cloud_attempted = false,
+                                           bool cloud_used = false,
+                                           const std::string& cloud_error = "") {
     std::ostringstream json;
     json << "{";
-    json << "\"success\":" << (cloud_handoff ? "false" : "true") << ",";
-    json << "\"error\":null,";
+    bool resolved_success = success || !cloud_handoff;
+    json << "\"success\":" << (resolved_success ? "true" : "false") << ",";
+    if (cloud_error.empty()) {
+        json << "\"error\":null,";
+    } else {
+        json << "\"error\":\"" << escape_json_string(cloud_error) << "\",";
+    }
     json << "\"cloud_handoff\":" << (cloud_handoff ? "true" : "false") << ",";
     json << "\"response\":\"" << escape_json_string(regular_response) << "\",";
+    json << "\"local_output\":\"" << escape_json_string(local_output) << "\",";
+    json << "\"response_source\":\"" << escape_json_string(response_source) << "\",";
+    json << "\"cloud_attempted\":" << (cloud_attempted ? "true" : "false") << ",";
+    json << "\"cloud_used\":" << (cloud_used ? "true" : "false") << ",";
+    if (cloud_error.empty()) {
+        json << "\"cloud_error\":null,";
+    } else {
+        json << "\"cloud_error\":\"" << escape_json_string(cloud_error) << "\",";
+    }
     json << "\"function_calls\":[";
     for (size_t i = 0; i < function_calls.size(); ++i) {
         if (i > 0) json << ",";

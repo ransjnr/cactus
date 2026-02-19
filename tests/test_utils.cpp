@@ -211,10 +211,41 @@ std::string json_string(const std::string& json, const std::string& key) {
 
     while (start < json.size() && (json[start] == ' ' || json[start] == '\t')) ++start;
     if (start >= json.size() || json[start] != '"') return {};
-    size_t q1 = start;
-    size_t q2 = json.find('"', q1 + 1);
-    if (q2 == std::string::npos) return {};
-    return json.substr(q1 + 1, q2 - q1 - 1);
+    ++start;
+
+    std::string out;
+    out.reserve(128);
+    bool escaped = false;
+    for (size_t i = start; i < json.size(); ++i) {
+        char c = json[i];
+        if (escaped) {
+            switch (c) {
+                case '"': out.push_back('"'); break;
+                case '\\': out.push_back('\\'); break;
+                case '/': out.push_back('/'); break;
+                case 'b': out.push_back('\b'); break;
+                case 'f': out.push_back('\f'); break;
+                case 'n': out.push_back('\n'); break;
+                case 'r': out.push_back('\r'); break;
+                case 't': out.push_back('\t'); break;
+                default: out.push_back(c); break;
+            }
+            escaped = false;
+            continue;
+        }
+
+        if (c == '\\') {
+            escaped = true;
+            continue;
+        }
+
+        if (c == '"') {
+            return out;
+        }
+
+        out.push_back(c);
+    }
+    return {};
 }
 
 std::string escape_json(const std::string& s) {
@@ -245,6 +276,84 @@ void stream_callback(const char* token, uint32_t token_id, void* user_data) {
         std::cout << " [-> stopped]" << std::flush;
         cactus_stop(data->model);
     }
+}
+
+std::string build_handoff_options(bool auto_handoff, bool force_tools) {
+    std::ostringstream oss;
+    oss << "{";
+    oss << "\"max_tokens\":256,";
+    oss << "\"stop_sequences\":[\"<|im_end|>\",\"<end_of_turn>\"],";
+    oss << "\"telemetry_enabled\":false,";
+    oss << "\"confidence_threshold\":1.1,";
+    oss << "\"cloud_timeout_ms\":2500,";
+    oss << "\"handoff_with_images\":true,";
+    oss << "\"auto_handoff\":" << (auto_handoff ? "true" : "false");
+    if (force_tools) {
+        oss << ",\"force_tools\":true";
+    }
+    oss << "}";
+    return oss.str();
+}
+
+bool run_handoff_mode_case(const char* model_path,
+                           const std::string& case_name,
+                           const std::string& messages_json,
+                           const std::string& tools_json,
+                           bool auto_handoff,
+                           bool expect_tool_signal) {
+    cactus_model_t model = cactus_init(model_path, nullptr, false);
+    if (!model) {
+        std::cerr << "[✗] Failed to initialize model for " << case_name << "\n";
+        return false;
+    }
+
+    StreamingData data;
+    data.model = model;
+    char response[8192];
+
+    std::string options = build_handoff_options(auto_handoff, expect_tool_signal);
+    int rc = cactus_complete(
+        model,
+        messages_json.c_str(),
+        response,
+        sizeof(response),
+        options.c_str(),
+        tools_json.empty() ? nullptr : tools_json.c_str(),
+        stream_callback,
+        &data
+    );
+
+    Metrics m;
+    m.parse(response);
+    bool has_function_calls = !m.function_calls.empty() && m.function_calls != "[]";
+    bool has_tool =
+        m.function_calls.find("\"name\"") != std::string::npos ||
+        m.function_calls.find("get_weather") != std::string::npos ||
+        m.function_calls.find("set_alarm") != std::string::npos;
+
+    bool ok = (rc > 0) && m.cloud_handoff;
+    if (auto_handoff) {
+        ok = ok && m.cloud_attempted;
+    } else {
+        ok = ok && !m.cloud_attempted && !m.cloud_used && (m.response_source == "local");
+    }
+    if (expect_tool_signal) {
+        ok = ok && (has_function_calls || has_tool);
+    } else {
+        ok = ok && !m.response.empty();
+    }
+
+    std::cout << "├─ " << case_name << " [" << (auto_handoff ? "handoff_on" : "handoff_off") << "]: "
+              << (ok ? "PASS" : "FAIL") << "\n";
+    std::cout << "│  response_source=" << (m.response_source.empty() ? "n/a" : m.response_source)
+              << ", cloud_attempted=" << (m.cloud_attempted ? "true" : "false")
+              << ", cloud_used=" << (m.cloud_used ? "true" : "false")
+              << ", cloud_error=" << (m.cloud_error.empty() ? "null" : m.cloud_error) << "\n";
+    std::cout << "│  response=\"" << m.response << "\"\n";
+    std::cout << "│  function_calls=" << m.function_calls << "\n";
+
+    cactus_destroy(model);
+    return ok;
 }
 
 bool json_bool(const std::string& json, const std::string& key, bool def = false) {
@@ -280,6 +389,11 @@ void Metrics::parse(const std::string& json) {
     error = json_string(json, "error");
     cloud_handoff = json_bool(json, "cloud_handoff", false);
     response = json_string(json, "response");
+    local_output = json_string(json, "local_output");
+    response_source = json_string(json, "response_source");
+    cloud_attempted = json_bool(json, "cloud_attempted", false);
+    cloud_used = json_bool(json, "cloud_used", false);
+    cloud_error = json_string(json, "cloud_error");
     function_calls = json_array(json, "function_calls");
     confidence = json_number(json, "confidence", -1.0);
     ttft = json_number(json, "time_to_first_token_ms");
@@ -297,6 +411,11 @@ void Metrics::print_json() const {
               << "  \"error\": " << (error.empty() ? "null" : "\"" + error + "\"") << ",\n"
               << "  \"cloud_handoff\": " << (cloud_handoff ? "true" : "false") << ",\n"
               << "  \"response\": \"" << response << "\",\n"
+              << "  \"local_output\": \"" << local_output << "\",\n"
+              << "  \"response_source\": \"" << response_source << "\",\n"
+              << "  \"cloud_attempted\": " << (cloud_attempted ? "true" : "false") << ",\n"
+              << "  \"cloud_used\": " << (cloud_used ? "true" : "false") << ",\n"
+              << "  \"cloud_error\": " << (cloud_error.empty() ? "null" : "\"" + cloud_error + "\"") << ",\n"
               << "  \"function_calls\": " << function_calls << ",\n"
               << "  \"confidence\": " << std::fixed << std::setprecision(4) << confidence << ",\n"
               << "  \"time_to_first_token_ms\": " << std::setprecision(2) << ttft << ",\n"
