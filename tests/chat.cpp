@@ -66,6 +66,8 @@ void print_header() {
 struct TokenPrinter {
     bool first_token = true;
     int token_count = 0;
+    bool in_tool_call = false;
+    std::string buffer;
     std::chrono::steady_clock::time_point start_time;
     std::chrono::steady_clock::time_point first_token_time;
     double time_to_first_token = 0.0;
@@ -73,6 +75,8 @@ struct TokenPrinter {
     void reset() {
         first_token = true;
         token_count = 0;
+        in_tool_call = false;
+        buffer.clear();
         time_to_first_token = 0.0;
         start_time = std::chrono::steady_clock::now();
     }
@@ -84,8 +88,56 @@ struct TokenPrinter {
             auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(first_token_time - start_time);
             time_to_first_token = latency.count() / 1000.0;
         }
-        std::cout << token << std::flush;
         token_count++;
+
+        std::string tok(token);
+
+        // Suppress tool call tokens from being displayed to the user.
+        // The model outputs <tool_call>...</tool_call> or <|tool_call_start|>...<|tool_call_end|>
+        // or <start_function_call>...<end_function_call> which are handled post-generation.
+        if (!in_tool_call) {
+            buffer += tok;
+            // Check if we're starting a tool call tag
+            if (buffer.find("<tool_call>") != std::string::npos ||
+                buffer.find("<|tool_call_start|>") != std::string::npos ||
+                buffer.find("<start_function_call>") != std::string::npos) {
+                // Find where the tag starts and print everything before it
+                size_t tag_pos = std::string::npos;
+                for (const auto& tag : {"<tool_call>", "<|tool_call_start|>", "<start_function_call>"}) {
+                    size_t pos = buffer.find(tag);
+                    if (pos != std::string::npos && (tag_pos == std::string::npos || pos < tag_pos)) {
+                        tag_pos = pos;
+                    }
+                }
+                if (tag_pos > 0) {
+                    std::cout << buffer.substr(0, tag_pos) << std::flush;
+                }
+                in_tool_call = true;
+                buffer.clear();
+                return;
+            }
+            // Only hold back tokens if we might be at the start of a tag
+            if (buffer.size() > 0 && buffer.back() == '<') {
+                // Could be the start of a tag, hold it
+                return;
+            }
+            if (buffer.find("<") != std::string::npos &&
+                buffer.size() < 21) { // max tag length: <start_function_call>
+                return;
+            }
+            // Safe to print the buffer
+            std::cout << buffer << std::flush;
+            buffer.clear();
+        } else {
+            // Inside a tool call — check for closing tags
+            buffer += tok;
+            if (buffer.find("</tool_call>") != std::string::npos ||
+                buffer.find("<|tool_call_end|>") != std::string::npos ||
+                buffer.find("<end_function_call>") != std::string::npos) {
+                in_tool_call = false;
+                buffer.clear();
+            }
+        }
     }
 
     void print_stats() {
@@ -219,17 +271,11 @@ private:
 public:
     std::string tools_json;
 
-    ToolExecutor(const char* tools_path, int port = 8765) : server_pid(-1) {
+    ToolExecutor(const char* tools_path, const char* server_path, int port = 8765) : server_pid(-1) {
         base_url = "http://127.0.0.1:" + std::to_string(port);
         curl = curl_easy_init();
 
-        // Find tools_server.py in same directory as tools file
-        std::string tools_path_str(tools_path);
-        size_t last_slash = tools_path_str.rfind('/');
-        std::string tools_dir = (last_slash != std::string::npos)
-            ? tools_path_str.substr(0, last_slash)
-            : ".";
-        std::string server_script = tools_dir + "/tools_server.py";
+        std::string server_script(server_path);
 
         // Start Python tools server
         server_pid = fork();
@@ -290,16 +336,17 @@ public:
 };
 
 int main(int argc, char* argv[]) {
-    if (argc < 2 || argc > 3) {
+    if (argc < 2 || argc > 4) {
         std::cerr << colored("Error: ", Color::RED + Color::BOLD) << "Invalid arguments\n";
-        std::cerr << "Usage: " << argv[0] << " <model_path> [tools_file]\n";
+        std::cerr << "Usage: " << argv[0] << " <model_path> [tools_file] [tools_server]\n";
         std::cerr << "Example: " << argv[0] << " weights/lfm2-1.2B\n";
-        std::cerr << "Example: " << argv[0] << " weights/lfm2-1.2B python/tools/example_tools.py\n";
+        std::cerr << "Example: " << argv[0] << " weights/lfm2-1.2B tools.py python/tools/tools_server.py\n";
         return 1;
     }
 
     const char* model_path = argv[1];
-    const char* tools_path = (argc == 3) ? argv[2] : nullptr;
+    const char* tools_path = (argc >= 3) ? argv[2] : nullptr;
+    const char* server_path = (argc >= 4) ? argv[3] : nullptr;
 
     std::cout << "\n" << colored("Loading model from ", Color::YELLOW)
               << colored(model_path, Color::CYAN) << colored("...", Color::YELLOW) << "\n";
@@ -315,8 +362,8 @@ int main(int argc, char* argv[]) {
 
     // Initialize tool executor if tools provided
     ToolExecutor* executor = nullptr;
-    if (tools_path) {
-        executor = new ToolExecutor(tools_path);
+    if (tools_path && server_path) {
+        executor = new ToolExecutor(tools_path, server_path);
         if (!executor->tools_json.empty() && executor->tools_json != "[]") {
             std::cout << colored("[Tools] Enabled\n", Color::GREEN);
         } else {

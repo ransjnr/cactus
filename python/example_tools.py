@@ -21,7 +21,6 @@ def get_weather(location: str, unit: Literal["celsius", "fahrenheit"] = "celsius
     Returns:
         Weather information including temperature and conditions
     """
-    # Simulated weather data (in production, would call real API)
     conditions = ["sunny", "cloudy", "rainy", "partly cloudy", "foggy"]
     temp_c = random.randint(-10, 35)
     temp_f = int(temp_c * 9/5 + 32)
@@ -85,7 +84,6 @@ def get_time(timezone: str = "UTC") -> dict:
             "unix_timestamp": int(now.timestamp())
         }
     except ImportError:
-        # Fallback if pytz not available
         now = datetime.datetime.now()
         return {
             "timezone": "local",
@@ -98,7 +96,6 @@ def get_time(timezone: str = "UTC") -> dict:
         }
 
 
-# Registry of all available tools
 TOOLS = {
     "get_weather": get_weather,
     "roll_dice": roll_dice,

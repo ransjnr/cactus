@@ -717,6 +717,8 @@ def cmd_run(args):
     cmd_args = [str(chat_binary), str(weights_dir)]
     if tools_path:
         cmd_args.append(str(Path(tools_path).resolve()))
+        tools_server = PROJECT_ROOT / "python" / "tools" / "tools_server.py"
+        cmd_args.append(str(tools_server))
 
     os.execv(str(chat_binary), cmd_args)
 

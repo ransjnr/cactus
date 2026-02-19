@@ -14,7 +14,7 @@ import logging
 from typing import get_type_hints, get_origin, get_args
 from flask import Flask, request, jsonify
 
-# Import tools from the user-provided module
+
 def load_tools_module(module_path):
     """Dynamically load tools from a Python file."""
     import importlib.util
@@ -28,11 +28,9 @@ def python_type_to_json_type(py_type) -> str:
     """Convert Python type hint to JSON schema type."""
     origin = get_origin(py_type)
 
-    # Handle Literal types
     if origin is type(Literal):
         return "string"
 
-    # Handle basic types
     type_map = {
         str: "string",
         int: "integer",
@@ -53,14 +51,39 @@ def extract_enum_values(py_type) -> list:
     return None
 
 
+def parse_param_descriptions(docstring: str) -> dict:
+    """Extract parameter descriptions from docstring (Google/numpy/sphinx styles)."""
+    param_descs = {}
+    if not docstring:
+        return param_descs
+
+    lines = docstring.split('\n')
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(':param '):
+            rest = stripped[7:]
+            if ':' in rest:
+                name, desc = rest.split(':', 1)
+                param_descs[name.strip()] = desc.strip()
+        elif ':' in stripped and not stripped.startswith(':'):
+            parts = stripped.split(':', 1)
+            name_part = parts[0].strip()
+            if '(' in name_part:
+                name_part = name_part[:name_part.index('(')].strip()
+            if name_part.isidentifier() and len(parts) > 1:
+                param_descs[name_part] = parts[1].strip()
+    return param_descs
+
+
 def generate_tool_schema(func) -> dict:
     """Generate OpenAI-compatible JSON schema from a Python function."""
     sig = inspect.signature(func)
     hints = get_type_hints(func)
     doc = inspect.getdoc(func) or ""
 
-    # Extract description (first line of docstring)
     description = doc.split('\n')[0] if doc else func.__name__
+
+    param_descs = parse_param_descriptions(doc)
 
     properties = {}
     required = []
@@ -72,19 +95,22 @@ def generate_tool_schema(func) -> dict:
         param_type = hints.get(param_name, str)
         json_type = python_type_to_json_type(param_type)
 
+        param_desc = param_descs.get(param_name, f"The '{param_name}' parameter")
+
         prop = {
             "type": json_type,
-            "description": f"The {param_name} parameter"
+            "description": param_desc
         }
 
-        # Add enum values if Literal type
         enum_values = extract_enum_values(param_type)
         if enum_values:
             prop["enum"] = enum_values
 
+        if param.default != inspect.Parameter.empty:
+            prop["description"] += f" (default: {param.default})"
+
         properties[param_name] = prop
 
-        # Mark as required if no default value
         if param.default == inspect.Parameter.empty:
             required.append(param_name)
 
@@ -102,11 +128,9 @@ def generate_tool_schema(func) -> dict:
     }
 
 
-# Import Literal for type checking
 try:
     from typing import Literal
 except ImportError:
-    # Python 3.7 compatibility
     try:
         from typing_extensions import Literal
     except ImportError:
@@ -117,7 +141,6 @@ def create_app(tools_dict):
     """Create Flask app with tool execution endpoints."""
     app = Flask(__name__)
 
-    # Disable Flask's default logging spam
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
 
@@ -141,7 +164,6 @@ def create_app(tools_dict):
                     "error": f"Unknown tool: {tool_name}"
                 }), 404
 
-            # Execute the tool
             tool_func = tools_dict[tool_name]
             result = tool_func(**arguments)
 
@@ -177,7 +199,6 @@ def main():
     tools_module_path = sys.argv[1]
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 8765
 
-    # Load tools
     try:
         tools_dict = load_tools_module(tools_module_path)
         print(f"[Tools Server] Loaded {len(tools_dict)} tools: {', '.join(tools_dict.keys())}", file=sys.stderr)
@@ -185,11 +206,9 @@ def main():
         print(f"[Tools Server] Failed to load tools: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Create and run app
     app = create_app(tools_dict)
     print(f"[Tools Server] Starting on port {port}...", file=sys.stderr)
 
-    # Run with minimal logging
     app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False)
 
 

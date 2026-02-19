@@ -24,6 +24,10 @@
 namespace cactus {
 namespace telemetry {
 
+static size_t discard_response(void* /*contents*/, size_t size, size_t nmemb, void* /*userp*/) {
+    return size * nmemb;
+}
+
 enum EventType { INIT = 0, COMPLETION = 1, EMBEDDING = 2, TRANSCRIPTION = 3, STREAM_TRANSCRIBE = 4 };
 
 struct Event {
@@ -632,6 +636,7 @@ static bool ensure_project_row(CURL* curl) {
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discard_response);
     apply_curl_tls_trust(curl);
     CURLcode res = curl_easy_perform(curl);
     long code = 0;
@@ -679,6 +684,7 @@ static bool ensure_device_row(CURL* curl) {
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discard_response);
     apply_curl_tls_trust(curl);
     CURLcode res = curl_easy_perform(curl);
     long code = 0;
@@ -710,6 +716,7 @@ static bool send_payload(CURL* curl, const std::string& url, const std::string& 
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discard_response);
     apply_curl_tls_trust(curl);
     CURLcode res = curl_easy_perform(curl);
     long code = 0;

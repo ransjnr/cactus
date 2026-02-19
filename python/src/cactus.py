@@ -31,25 +31,59 @@ All completion responses use a unified JSON format with all fields always presen
 }
 """
 import ctypes
+import ctypes.util
 import json
+import os
 import platform
 from pathlib import Path
 
 TokenCallback = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_uint32, ctypes.c_void_p)
 
-_DIR = Path(__file__).parent.parent.parent
-if platform.system() == "Darwin":
-    _LIB_PATH = _DIR / "cactus" / "build" / "libcactus.dylib"
-else:
-    _LIB_PATH = _DIR / "cactus" / "build" / "libcactus.so"
+_LIB_NAME = "libcactus.dylib" if platform.system() == "Darwin" else "libcactus.so"
 
-if not _LIB_PATH.exists():
+def _find_cactus_lib():
+    # 1. Explicit override via environment variable
+    env_path = os.environ.get("CACTUS_LIB_PATH")
+    if env_path:
+        p = Path(env_path)
+        if p.is_file():
+            return str(p)
+        if p.is_dir():
+            candidate = p / _LIB_NAME
+            if candidate.exists():
+                return str(candidate)
+
+    # 2. Development: relative to source tree (python/src/cactus.py -> ../../cactus/build/)
+    dev_path = Path(__file__).parent.parent.parent / "cactus" / "build" / _LIB_NAME
+    if dev_path.exists():
+        return str(dev_path)
+
+    # 3. Homebrew / system lib directories
+    for prefix in ["/opt/homebrew", "/usr/local"]:
+        brew_path = Path(prefix) / "lib" / _LIB_NAME
+        if brew_path.exists():
+            return str(brew_path)
+
+    # 4. System dynamic linker search
+    found = ctypes.util.find_library("cactus")
+    if found:
+        return found
+
+    return None
+
+_LIB_PATH = _find_cactus_lib()
+if _LIB_PATH is None:
     raise RuntimeError(
-        f"Cactus library not found at {_LIB_PATH}\n"
-        f"Please build first: cactus build --python"
+        f"Cactus shared library ({_LIB_NAME}) not found.\n"
+        f"Search locations:\n"
+        f"  - CACTUS_LIB_PATH environment variable\n"
+        f"  - Development build: cactus/build/{_LIB_NAME}\n"
+        f"  - Homebrew: /opt/homebrew/lib/ or /usr/local/lib/\n"
+        f"  - System library path\n"
+        f"Build with: cactus build --python"
     )
 
-_lib = ctypes.CDLL(str(_LIB_PATH))
+_lib = ctypes.CDLL(_LIB_PATH)
 
 _lib.cactus_set_telemetry_environment.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
 _lib.cactus_set_telemetry_environment.restype = None

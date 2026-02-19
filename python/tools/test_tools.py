@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""
-Quick test script to verify tools are working.
-Run this to check your tool setup before using with Cactus.
-"""
-
 import sys
 import json
 from pathlib import Path
 
-# Test importing tools
 try:
     from example_tools import TOOLS, get_weather, roll_dice, get_time
     print("✓ Tools imported successfully")
@@ -17,7 +11,6 @@ except ImportError as e:
     print(f"✗ Failed to import tools: {e}")
     sys.exit(1)
 
-# Test schema generation
 try:
     sys.path.insert(0, str(Path(__file__).parent))
     from tools_server import generate_tool_schema
@@ -32,7 +25,6 @@ except Exception as e:
     print(f"\n✗ Schema generation failed: {e}")
     sys.exit(1)
 
-# Test tool execution
 print("\n" + "="*50)
 print("Testing tool execution:")
 print("="*50)
