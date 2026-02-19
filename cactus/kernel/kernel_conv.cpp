@@ -705,3 +705,118 @@ void cactus_stft_magnitude_f16(
         }
     }
 }
+
+void cactus_conv1d_same_depthwise_f16_k9(
+    const __fp16* input,
+    const __fp16* weight,
+    const __fp16* bias,
+    __fp16* output,
+    size_t N, size_t L, size_t C)
+{
+    constexpr int K = 9;
+    constexpr int PAD = 4;
+
+    const size_t bs = L * C;
+
+    CactusThreading::parallel_for_2d(
+        N, C, CactusThreading::Thresholds::ATTENTION, //Verify this threading configuration logic with Henry (when to chose Attention v.s. Max Int)
+        [&](size_t n, size_t c) {
+
+        const __fp16* Xb = input  + n * bs;
+        __fp16* Yb = output + n * bs;
+
+        const __fp16* Wc = weight + c * K;
+
+        const float w0 = (float)Wc[0];
+        const float w1 = (float)Wc[1];
+        const float w2 = (float)Wc[2];
+        const float w3 = (float)Wc[3];
+        const float w4 = (float)Wc[4];
+        const float w5 = (float)Wc[5];
+        const float w6 = (float)Wc[6];
+        const float w7 = (float)Wc[7];
+        const float w8 = (float)Wc[8];
+
+        const float b = bias ? (float)bias[c] : 0.f;
+
+        const float32x4_t wv0 = {w0, w1, w2, w3};
+        const float32x4_t wv1 = {w4, w5, w6, w7};
+
+        for (size_t t0 = 0; t0 < L; t0 += T_TILE_F16) {
+            const bool have_t1 = (t0 + 1 < L);
+            const size_t t1 = have_t1 ? (t0 + 1) : t0;
+
+            float x0_0=0, x1_0=0, x2_0=0, x3_0=0;
+            float x4_0=0, x5_0=0, x6_0=0, x7_0=0;
+            float x8_0=0;
+
+            {
+                const ptrdiff_t i0 = (ptrdiff_t)t0 - 4;
+                const ptrdiff_t i1 = (ptrdiff_t)t0 - 3;
+                const ptrdiff_t i2 = (ptrdiff_t)t0 - 2;
+                const ptrdiff_t i3 = (ptrdiff_t)t0 - 1;
+                if (i0 >= 0 && i0 < (ptrdiff_t)L) x0_0 = (float)Xb[(size_t)i0 * C + c];
+                if (i1 >= 0 && i1 < (ptrdiff_t)L) x1_0 = (float)Xb[(size_t)i1 * C + c];
+                if (i2 >= 0 && i2 < (ptrdiff_t)L) x2_0 = (float)Xb[(size_t)i2 * C + c];
+                if (i3 >= 0 && i3 < (ptrdiff_t)L) x3_0 = (float)Xb[(size_t)i3 * C + c];
+
+                const ptrdiff_t j4 = (ptrdiff_t)t0 + 0;
+                const ptrdiff_t j5 = (ptrdiff_t)t0 + 1;
+                const ptrdiff_t j6 = (ptrdiff_t)t0 + 2;
+                const ptrdiff_t j7 = (ptrdiff_t)t0 + 3;
+                const ptrdiff_t j8 = (ptrdiff_t)t0 + 4;
+                if (j4 >= 0 && j4 < (ptrdiff_t)L) x4_0 = (float)Xb[(size_t)j4 * C + c];
+                if (j5 >= 0 && j5 < (ptrdiff_t)L) x5_0 = (float)Xb[(size_t)j5 * C + c];
+                if (j6 >= 0 && j6 < (ptrdiff_t)L) x6_0 = (float)Xb[(size_t)j6 * C + c];
+                if (j7 >= 0 && j7 < (ptrdiff_t)L) x7_0 = (float)Xb[(size_t)j7 * C + c];
+                if (j8 >= 0 && j8 < (ptrdiff_t)L) x8_0 = (float)Xb[(size_t)j8 * C + c];
+            }
+
+            float32x4_t acc0v = vdupq_n_f32(0.f);
+            const float32x4_t xv0_0 = {x0_0, x1_0, x2_0, x3_0};
+            const float32x4_t xv1_0 = {x4_0, x5_0, x6_0, x7_0};
+            acc0v = vfmaq_f32(acc0v, xv0_0, wv0);
+            acc0v = vfmaq_f32(acc0v, xv1_0, wv1);
+            float acc0 = b + vaddvq_f32(acc0v) + (w8 * x8_0);
+
+            float acc1 = 0.f;
+            if (have_t1) {
+                float x0_1=0, x1_1=0, x2_1=0, x3_1=0;
+                float x4_1=0, x5_1=0, x6_1=0, x7_1=0;
+                float x8_1=0;
+
+                {
+                    const ptrdiff_t i0 = (ptrdiff_t)t1 - 4;
+                    const ptrdiff_t i1 = (ptrdiff_t)t1 - 3;
+                    const ptrdiff_t i2 = (ptrdiff_t)t1 - 2;
+                    const ptrdiff_t i3 = (ptrdiff_t)t1 - 1;
+                    if (i0 >= 0 && i0 < (ptrdiff_t)L) x0_1 = (float)Xb[(size_t)i0 * C + c];
+                    if (i1 >= 0 && i1 < (ptrdiff_t)L) x1_1 = (float)Xb[(size_t)i1 * C + c];
+                    if (i2 >= 0 && i2 < (ptrdiff_t)L) x2_1 = (float)Xb[(size_t)i2 * C + c];
+                    if (i3 >= 0 && i3 < (ptrdiff_t)L) x3_1 = (float)Xb[(size_t)i3 * C + c];
+
+                    const ptrdiff_t j4 = (ptrdiff_t)t1 + 0;
+                    const ptrdiff_t j5 = (ptrdiff_t)t1 + 1;
+                    const ptrdiff_t j6 = (ptrdiff_t)t1 + 2;
+                    const ptrdiff_t j7 = (ptrdiff_t)t1 + 3;
+                    const ptrdiff_t j8 = (ptrdiff_t)t1 + 4;
+                    if (j4 >= 0 && j4 < (ptrdiff_t)L) x4_1 = (float)Xb[(size_t)j4 * C + c];
+                    if (j5 >= 0 && j5 < (ptrdiff_t)L) x5_1 = (float)Xb[(size_t)j5 * C + c];
+                    if (j6 >= 0 && j6 < (ptrdiff_t)L) x6_1 = (float)Xb[(size_t)j6 * C + c];
+                    if (j7 >= 0 && j7 < (ptrdiff_t)L) x7_1 = (float)Xb[(size_t)j7 * C + c];
+                    if (j8 >= 0 && j8 < (ptrdiff_t)L) x8_1 = (float)Xb[(size_t)j8 * C + c];
+                }
+
+                float32x4_t acc1v = vdupq_n_f32(0.f);
+                const float32x4_t xv0_1 = {x0_1, x1_1, x2_1, x3_1};
+                const float32x4_t xv1_1 = {x4_1, x5_1, x6_1, x7_1};
+                acc1v = vfmaq_f32(acc1v, xv0_1, wv0);
+                acc1v = vfmaq_f32(acc1v, xv1_1, wv1);
+                acc1 = b + vaddvq_f32(acc1v) + (w8 * x8_1);
+            }
+
+            Yb[t0 * C + c] = (__fp16)acc0;
+            if (have_t1) Yb[t1 * C + c] = (__fp16)acc1;
+        }
+    });
+}
