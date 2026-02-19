@@ -334,7 +334,7 @@ inline void parse_options_json(const std::string& json,
     max_tokens = 100;
     force_tools = false;
     tool_rag_top_k = 2;
-    confidence_threshold = 0.95f;
+    confidence_threshold = 0.7f;
     include_stop_sequences = false;
     use_vad = true;
     telemetry_enabled = true;
