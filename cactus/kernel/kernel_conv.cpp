@@ -817,3 +817,275 @@ void cactus_conv1d_same_depthwise_f16_k9(
         }
     });
 }
+
+// General Conv2D: Need to Discuss
+// void cactus_conv2d_f16_nchw_regular_tiled(
+//     const __fp16* input,          // [N, C_in, H, W]
+//     const __fp16* weight,         // [C_out, C_in, KH, KW]
+//     const __fp16* bias,           // [C_out] or nullptr
+//     __fp16* output,               // [N, C_out, H_out, W_out]
+//     size_t N,
+//     size_t C_in, size_t H, size_t W,
+//     size_t C_out,
+//     size_t KH, size_t KW,
+//     size_t stride_h, size_t stride_w,
+//     size_t pad_h, size_t pad_w
+// ){
+//     if (H + 2 * pad_h < KH || W + 2 * pad_w < KW) return;
+
+//     const size_t H_out = (H + 2 * pad_h - KH) / stride_h + 1;
+//     const size_t W_out = (W + 2 * pad_w - KW) / stride_w + 1;
+
+//     auto in_idx = [&](size_t n, size_t ic, size_t ih, size_t iw) -> size_t {
+//         return ((n * C_in + ic) * H + ih) * W + iw;
+//     };
+//     auto w_idx = [&](size_t oc, size_t ic, size_t kh, size_t kw) -> size_t {
+//         return (((oc * C_in + ic) * KH + kh) * KW + kw);
+//     };
+//     auto out_idx = [&](size_t n, size_t oc, size_t oh, size_t ow) -> size_t {
+//         return ((n * C_out + oc) * H_out + oh) * W_out + ow;
+//     };
+
+//     constexpr size_t OW_TILE = 16;
+
+//     const size_t total_compute = N * C_out * H_out * W_out * C_in * KH * KW;
+//     CactusThreading::ParallelConfig cfg =
+//         (total_compute < 100000) ? CactusThreading::ParallelConfig{SIZE_MAX, SIZE_MAX}
+//                                  : CactusThreading::Thresholds::ATTENTION;
+
+//     // Parallelize over (batch, out_channel) like your other conv kernels.
+//     CactusThreading::parallel_for_2d(N, C_out, cfg, [&](size_t n, size_t oc) {
+//         const float b = bias ? (float)bias[oc] : 0.f;
+
+//         for (size_t oh = 0; oh < H_out; ++oh) {
+//             const ptrdiff_t ih_base = (ptrdiff_t)oh * (ptrdiff_t)stride_h - (ptrdiff_t)pad_h;
+
+//             for (size_t ow0 = 0; ow0 < W_out; ow0 += OW_TILE) {
+//                 const size_t tile = std::min(OW_TILE, W_out - ow0);
+
+//                 // Output-stationary accumulators for a width tile
+//                 float acc[OW_TILE];
+//                 for (size_t t = 0; t < tile; ++t) acc[t] = b;
+
+//                 // Sum over input channels + kernel window
+//                 for (size_t ic = 0; ic < C_in; ++ic) {
+//                     for (size_t kh = 0; kh < KH; ++kh) {
+//                         const ptrdiff_t ih = ih_base + (ptrdiff_t)kh;
+//                         if ((size_t)ih >= H) continue; // handles ih < 0 too via cast
+
+//                         for (size_t kw = 0; kw < KW; ++kw) {
+//                             const float wv = (float)weight[w_idx(oc, ic, kh, kw)];
+
+//                             // For this (ic,kh,kw), walk across the output width tile
+//                             for (size_t t = 0; t < tile; ++t) {
+//                                 const size_t ow = ow0 + t;
+//                                 const ptrdiff_t iw = (ptrdiff_t)ow * (ptrdiff_t)stride_w - (ptrdiff_t)pad_w + (ptrdiff_t)kw;
+//                                 if ((size_t)iw >= W) continue;
+
+//                                 const float xv = (float)input[in_idx(n, ic, (size_t)ih, (size_t)iw)];
+//                                 acc[t] += xv * wv;
+//                             }
+//                         }
+//                     }
+//                 }
+
+//                 // Store once
+//                 for (size_t t = 0; t < tile; ++t) {
+//                     output[out_idx(n, oc, oh, ow0 + t)] = (__fp16)acc[t];
+//                 }
+//             }
+//         }
+//     });
+// }
+
+
+
+void cactus_conv2d_f16_k3s2p1_nchw(
+    const __fp16* input,
+    const __fp16* weight,
+    const __fp16* bias,
+    __fp16* output,
+    size_t N,
+    size_t C_in, size_t H, size_t W,
+    size_t C_out
+){
+    // H_out = floor((H + 2*pad - KH)/stride) + 1 with KH=3, pad=1, stride=2
+    if (H + 2 < 3 || W + 2 < 3) return;
+    const size_t H_out = (H - 1) / 2 + 1;   // (H + 2 - 3)/2 + 1
+    const size_t W_out = (W - 1) / 2 + 1;
+
+    auto in_idx = [&](size_t n, size_t ic, size_t ih, size_t iw) -> size_t {
+        return ((n * C_in + ic) * H + ih) * W + iw;
+    };
+    auto w_idx = [&](size_t oc, size_t ic, size_t kh, size_t kw) -> size_t {
+        // (((oc*C_in + ic)*3 + kh)*3 + kw)
+        return (((oc * C_in + ic) * 3 + kh) * 3 + kw);
+    };
+    auto out_idx = [&](size_t n, size_t oc, size_t oh, size_t ow) -> size_t {
+        return ((n * C_out + oc) * H_out + oh) * W_out + ow;
+    };
+
+    constexpr size_t OW_VEC = 4;   // compute 4 output columns at a time
+
+    const size_t total_compute = N * C_out * H_out * W_out * C_in * 9;
+    CactusThreading::ParallelConfig cfg =
+        (total_compute < 100000) ? CactusThreading::ParallelConfig{SIZE_MAX, SIZE_MAX}
+                                 : CactusThreading::Thresholds::ATTENTION;
+
+    // Parallel over (batch, output channel) like your other kernels
+    CactusThreading::parallel_for_2d(N, C_out, cfg, [&](size_t n, size_t oc) {
+        const float b0 = bias ? (float)bias[oc] : 0.f;
+
+        for (size_t oh = 0; oh < H_out; ++oh) {
+            const ptrdiff_t ih0 = (ptrdiff_t)oh * 2 - 1; // pad=1
+
+            // height interior means ih0, ih0+1, ih0+2 all valid
+            const bool h_interior = (ih0 >= 0) && ((size_t)(ih0 + 2) < H);
+
+            for (size_t ow = 0; ow < W_out; ) {
+                const size_t rem = W_out - ow;
+
+                // width interior for a 4-wide tile means:
+                // for ow..ow+3, each needs iw0=ow*2-1 and iw2=ow*2+1 in-range
+                // i.e. ow>=1 and (ow+3)*2+1 < W
+                const bool do_vec = (rem >= OW_VEC);
+                const bool w_interior_vec =
+                    do_vec &&
+                    (ow >= 1) &&
+                    (((ow + (OW_VEC - 1)) * 2 + 1) < W);
+
+                float32x4_t vacc = vdupq_n_f32(b0);
+
+                if (h_interior && w_interior_vec) {
+                    // FAST PATH: no bounds checks
+                    for (size_t ic = 0; ic < C_in; ++ic) {
+                        // pointers to the 3 input rows for this ic
+                        const __fp16* row0 = input + in_idx(n, ic, (size_t)(ih0 + 0), 0);
+                        const __fp16* row1 = input + in_idx(n, ic, (size_t)(ih0 + 1), 0);
+                        const __fp16* row2 = input + in_idx(n, ic, (size_t)(ih0 + 2), 0);
+
+                        // base iw for kw=0 at lane0 is (ow*2 - 1 + 0)
+                        const ptrdiff_t iw_base0 = (ptrdiff_t)ow * 2 - 1;
+
+                        // kh=0
+                        {
+                            const float w00 = (float)weight[w_idx(oc, ic, 0, 0)];
+                            const float w01 = (float)weight[w_idx(oc, ic, 0, 1)];
+                            const float w02 = (float)weight[w_idx(oc, ic, 0, 2)];
+
+                            // kw=0 uses iw_base0 + 2*t
+                            float x0 = (float)row0[(size_t)(iw_base0 + 0)];
+                            float x1 = (float)row0[(size_t)(iw_base0 + 2)];
+                            float x2 = (float)row0[(size_t)(iw_base0 + 4)];
+                            float x3 = (float)row0[(size_t)(iw_base0 + 6)];
+                            vacc = vfmaq_f32(vacc, (float32x4_t){x0,x1,x2,x3}, vdupq_n_f32(w00));
+
+                            // kw=1 uses iw_base0+1 + 2*t
+                            x0 = (float)row0[(size_t)(iw_base0 + 1)];
+                            x1 = (float)row0[(size_t)(iw_base0 + 3)];
+                            x2 = (float)row0[(size_t)(iw_base0 + 5)];
+                            x3 = (float)row0[(size_t)(iw_base0 + 7)];
+                            vacc = vfmaq_f32(vacc, (float32x4_t){x0,x1,x2,x3}, vdupq_n_f32(w01));
+
+                            // kw=2 uses iw_base0+2 + 2*t
+                            x0 = (float)row0[(size_t)(iw_base0 + 2)];
+                            x1 = (float)row0[(size_t)(iw_base0 + 4)];
+                            x2 = (float)row0[(size_t)(iw_base0 + 6)];
+                            x3 = (float)row0[(size_t)(iw_base0 + 8)];
+                            vacc = vfmaq_f32(vacc, (float32x4_t){x0,x1,x2,x3}, vdupq_n_f32(w02));
+                        }
+
+                        // kh=1
+                        {
+                            const float w10 = (float)weight[w_idx(oc, ic, 1, 0)];
+                            const float w11 = (float)weight[w_idx(oc, ic, 1, 1)];
+                            const float w12 = (float)weight[w_idx(oc, ic, 1, 2)];
+                            const ptrdiff_t iw_base0 = (ptrdiff_t)ow * 2 - 1;
+
+                            float x0 = (float)row1[(size_t)(iw_base0 + 0)];
+                            float x1 = (float)row1[(size_t)(iw_base0 + 2)];
+                            float x2 = (float)row1[(size_t)(iw_base0 + 4)];
+                            float x3 = (float)row1[(size_t)(iw_base0 + 6)];
+                            vacc = vfmaq_f32(vacc, (float32x4_t){x0,x1,x2,x3}, vdupq_n_f32(w10));
+
+                            x0 = (float)row1[(size_t)(iw_base0 + 1)];
+                            x1 = (float)row1[(size_t)(iw_base0 + 3)];
+                            x2 = (float)row1[(size_t)(iw_base0 + 5)];
+                            x3 = (float)row1[(size_t)(iw_base0 + 7)];
+                            vacc = vfmaq_f32(vacc, (float32x4_t){x0,x1,x2,x3}, vdupq_n_f32(w11));
+
+                            x0 = (float)row1[(size_t)(iw_base0 + 2)];
+                            x1 = (float)row1[(size_t)(iw_base0 + 4)];
+                            x2 = (float)row1[(size_t)(iw_base0 + 6)];
+                            x3 = (float)row1[(size_t)(iw_base0 + 8)];
+                            vacc = vfmaq_f32(vacc, (float32x4_t){x0,x1,x2,x3}, vdupq_n_f32(w12));
+                        }
+
+                        // kh=2
+                        {
+                            const float w20 = (float)weight[w_idx(oc, ic, 2, 0)];
+                            const float w21 = (float)weight[w_idx(oc, ic, 2, 1)];
+                            const float w22 = (float)weight[w_idx(oc, ic, 2, 2)];
+                            const ptrdiff_t iw_base0 = (ptrdiff_t)ow * 2 - 1;
+
+                            float x0 = (float)row2[(size_t)(iw_base0 + 0)];
+                            float x1 = (float)row2[(size_t)(iw_base0 + 2)];
+                            float x2 = (float)row2[(size_t)(iw_base0 + 4)];
+                            float x3 = (float)row2[(size_t)(iw_base0 + 6)];
+                            vacc = vfmaq_f32(vacc, (float32x4_t){x0,x1,x2,x3}, vdupq_n_f32(w20));
+
+                            x0 = (float)row2[(size_t)(iw_base0 + 1)];
+                            x1 = (float)row2[(size_t)(iw_base0 + 3)];
+                            x2 = (float)row2[(size_t)(iw_base0 + 5)];
+                            x3 = (float)row2[(size_t)(iw_base0 + 7)];
+                            vacc = vfmaq_f32(vacc, (float32x4_t){x0,x1,x2,x3}, vdupq_n_f32(w21));
+
+                            x0 = (float)row2[(size_t)(iw_base0 + 2)];
+                            x1 = (float)row2[(size_t)(iw_base0 + 4)];
+                            x2 = (float)row2[(size_t)(iw_base0 + 6)];
+                            x3 = (float)row2[(size_t)(iw_base0 + 8)];
+                            vacc = vfmaq_f32(vacc, (float32x4_t){x0,x1,x2,x3}, vdupq_n_f32(w22));
+                        }
+                    }
+
+                    // store 4 fp16 outputs contiguously
+                    __fp16* Y = output + out_idx(n, oc, oh, ow);
+                    const float16x4_t yv = vcvt_f16_f32(vacc);
+                    vst1_f16(Y, yv);
+
+                    ow += OW_VEC;
+                    continue;
+                }
+
+                // Border Check: Need to discuss, right now far too slow
+                const size_t tile = do_vec ? OW_VEC : 1;
+                float acc_s[OW_VEC] = {b0, b0, b0, b0};
+
+                for (size_t ic = 0; ic < C_in; ++ic) {
+                    for (size_t kh = 0; kh < 3; ++kh) {
+                        const ptrdiff_t ih = ih0 + (ptrdiff_t)kh;
+                        if (ih < 0 || ih >= (ptrdiff_t)H) continue;
+
+                        const __fp16* row = input + in_idx(n, ic, (size_t)ih, 0);
+
+                        for (size_t kw = 0; kw < 3; ++kw) {
+                            const float wv = (float)weight[w_idx(oc, ic, kh, kw)];
+                            for (size_t t = 0; t < tile; ++t) {
+                                const size_t ow_t = ow + t;
+                                const ptrdiff_t iw = (ptrdiff_t)ow_t * 2 - 1 + (ptrdiff_t)kw;
+                                if (iw < 0 || iw >= (ptrdiff_t)W) continue;
+                                acc_s[t] += (float)row[(size_t)iw] * wv;
+                            }
+                        }
+                    }
+                }
+
+                __fp16* Y = output + out_idx(n, oc, oh, ow);
+                for (size_t t = 0; t < tile; ++t) {
+                    Y[t] = (__fp16)acc_s[t];
+                }
+                ow += tile;
+            }
+        }
+    });
+}
