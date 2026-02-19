@@ -158,11 +158,6 @@ struct Metrics {
     std::string error;
     bool cloud_handoff = false;
     std::string response;
-    std::string local_output;
-    std::string response_source;
-    bool cloud_attempted = false;
-    bool cloud_used = false;
-    std::string cloud_error;
     std::string function_calls;
     double confidence = -1.0;
     double ttft = 0.0;

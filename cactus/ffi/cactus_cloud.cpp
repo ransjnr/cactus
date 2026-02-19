@@ -152,11 +152,6 @@ static std::string env_or_default(const char* key, const char* fallback) {
     return std::string(fallback);
 }
 
-static std::string ensure_no_trailing_slash(std::string url) {
-    while (!url.empty() && url.back() == '/') url.pop_back();
-    return url;
-}
-
 static bool read_file_bytes(const std::string& path, std::vector<uint8_t>& out) {
     std::ifstream in(path, std::ios::binary);
     if (!in.is_open()) return false;
@@ -443,6 +438,19 @@ CloudCompletionResult cloud_complete_request(const CloudCompletionRequest& reque
         std::string regular_response;
         parse_function_calls_from_response(response, regular_response, function_calls);
         response = regular_response;
+    }
+
+    if (function_calls.empty()) {
+        auto first = response.find_first_not_of(" \t\n\r");
+        auto last = response.find_last_not_of(" \t\n\r");
+        if (first != std::string::npos && last != std::string::npos) {
+            std::string trimmed = response.substr(first, last - first + 1);
+            if (!trimmed.empty() && trimmed.front() == '[' && trimmed.back() == ']' &&
+                trimmed.find("\"name\"") != std::string::npos) {
+                function_calls = split_top_level_json_array(trimmed);
+                response.clear();
+            }
+        }
     }
 
     CloudCompletionResult out;

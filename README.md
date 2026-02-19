@@ -50,17 +50,12 @@ int result = cactus_complete(
 Example response from Gemma3-270m
 ```json
 {
-    "success": true,                 // completion request succeeded
+    "success": true,                 // when successfully generated
     "error": null,                   // returns specific errors if success = false
-    "cloud_handoff": false,          // recommendation signal: low-confidence local generation
-    "response": "Hi there!",         // selected primary output (cloud or local)
-    "local_output": "Hi there!",     // full local output (always present on successful completion)
-    "response_source": "local",      // "local" or "cloud"
-    "cloud_attempted": false,        // whether cloud request was attempted
-    "cloud_used": false,             // whether cloud result became primary response
-    "cloud_error": null,             // cloud failure reason when fallback happened
+    "cloud_handoff": false,          // true when response is generated with cloud model
+    "response": "Hi there!",         // null when error is not null
     "function_calls": [],            // parsed to [{"name":"set_alarm","arguments":{"hour":"10","minute":"0"}}]
-    "confidence": 0.8193,            // how confident the model is with its response
+    "confidence": 0.8193,            // how confident the model is with its locally generated response
     "time_to_first_token_ms": 45.23, // latency (time to first token)
     "total_time_ms": 163.67,         // total execution time
     "prefill_tps": 1621.89,          // prefill tokens per second
@@ -71,31 +66,6 @@ Example response from Gemma3-270m
     "total_tokens": 78
 }
 ```
-
-## Cloud Handoff
-
-### Default flow
-
-Cactus runs local generation first and computes confidence as:
-
-`confidence = 1 - normalized_entropy`
-
-During generation:
-1. If confidence drops below threshold, `cloud_handoff` is set to `true` (recommendation signal).
-2. If `auto_handoff=true` (default), Cactus attempts cloud completion in parallel.
-3. Local decoding always continues (no local stop for cloud).
-4. Cactus waits up to `cloud_timeout_ms` for cloud result, then returns:
-   - cloud output as primary `response` if available in time
-   - otherwise local output as primary `response` (fallback)
-5. `local_output` is always returned so callers can compare/override.
-
-### Default options and knobs
-
-Cloud endpoint settings via environment:
-
-- `CACTUS_CLOUD_API_KEY`
-- `CACTUS_CLOUD_TEXT_MODEL` (default `gemini-2.5-flash`)
-- `CACTUS_CLOUD_VLM_MODEL` (default `gemini-2.5-flash`)
 
 ## Cactus Graph
 

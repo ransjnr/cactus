@@ -677,33 +677,13 @@ inline std::string construct_response_json(const std::string& regular_response,
                                            size_t prompt_tokens,
                                            size_t completion_tokens,
                                            float confidence = 0.0f,
-                                           bool cloud_handoff = false,
-                                           bool success = false,
-                                           const std::string& local_output = "",
-                                           const std::string& response_source = "local",
-                                           bool cloud_attempted = false,
-                                           bool cloud_used = false,
-                                           const std::string& cloud_error = "") {
+                                           bool cloud_handoff = false) {
     std::ostringstream json;
     json << "{";
-    bool resolved_success = success || !cloud_handoff;
-    json << "\"success\":" << (resolved_success ? "true" : "false") << ",";
-    if (cloud_error.empty()) {
-        json << "\"error\":null,";
-    } else {
-        json << "\"error\":\"" << escape_json_string(cloud_error) << "\",";
-    }
+    json << "\"success\":true,";
+    json << "\"error\":null,";
     json << "\"cloud_handoff\":" << (cloud_handoff ? "true" : "false") << ",";
     json << "\"response\":\"" << escape_json_string(regular_response) << "\",";
-    json << "\"local_output\":\"" << escape_json_string(local_output) << "\",";
-    json << "\"response_source\":\"" << escape_json_string(response_source) << "\",";
-    json << "\"cloud_attempted\":" << (cloud_attempted ? "true" : "false") << ",";
-    json << "\"cloud_used\":" << (cloud_used ? "true" : "false") << ",";
-    if (cloud_error.empty()) {
-        json << "\"cloud_error\":null,";
-    } else {
-        json << "\"cloud_error\":\"" << escape_json_string(cloud_error) << "\",";
-    }
     json << "\"function_calls\":[";
     for (size_t i = 0; i < function_calls.size(); ++i) {
         if (i > 0) json << ",";
@@ -719,30 +699,6 @@ inline std::string construct_response_json(const std::string& regular_response,
     json << "\"prefill_tokens\":" << prompt_tokens << ",";
     json << "\"decode_tokens\":" << completion_tokens << ",";
     json << "\"total_tokens\":" << (prompt_tokens + completion_tokens);
-    json << "}";
-    return json.str();
-}
-
-inline std::string construct_cloud_handoff_json(float confidence,
-                                                 double time_to_first_token,
-                                                 double prefill_tps,
-                                                 size_t prompt_tokens) {
-    std::ostringstream json;
-    json << "{";
-    json << "\"success\":false,";
-    json << "\"error\":null,";
-    json << "\"cloud_handoff\":true,";
-    json << "\"response\":null,";
-    json << "\"function_calls\":[],";
-    json << "\"confidence\":" << std::fixed << std::setprecision(4) << confidence << ",";
-    json << "\"time_to_first_token_ms\":" << std::fixed << std::setprecision(2) << time_to_first_token << ",";
-    json << "\"total_time_ms\":" << std::fixed << std::setprecision(2) << time_to_first_token << ",";
-    json << "\"prefill_tps\":" << std::fixed << std::setprecision(2) << prefill_tps << ",";
-    json << "\"decode_tps\":0.0,";
-    json << "\"ram_usage_mb\":" << std::fixed << std::setprecision(2) << get_ram_usage_mb() << ",";
-    json << "\"prefill_tokens\":" << prompt_tokens << ",";
-    json << "\"decode_tokens\":0,";
-    json << "\"total_tokens\":" << prompt_tokens;
     json << "}";
     return json.str();
 }

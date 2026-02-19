@@ -370,14 +370,18 @@ bool test_multiple_tool_call_invocations() {
     })";
 
     return EngineTestUtils::run_test("MULTIPLE TOOLS TEST", g_model_path, messages, options_with_force_tools,
-        [](int result, const StreamingData&, const std::string& response, const Metrics& m) {
-            bool has_function = response.find("\"function_calls\":[") != std::string::npos;
+        [](int result, const StreamingData&, const std::string&, const Metrics& m) {
+            std::string call_source = m.function_calls;
+            if (call_source.empty() || call_source == "[]") {
+                call_source = m.response;
+            }
+            bool has_function = !call_source.empty() && call_source != "[]";
             bool has_weather_tool = has_function
-                && (response.find("\"name\":\"get_weather\"") != std::string::npos
-                    || response.find("\"name\": \"get_weather\"") != std::string::npos);
+                && (call_source.find("\"name\":\"get_weather\"") != std::string::npos
+                    || call_source.find("\"name\": \"get_weather\"") != std::string::npos);
             bool has_message_tool = has_function
-                && (response.find("\"name\":\"send_message\"") != std::string::npos
-                    || response.find("\"name\": \"send_message\"") != std::string::npos);
+                && (call_source.find("\"name\":\"send_message\"") != std::string::npos
+                    || call_source.find("\"name\": \"send_message\"") != std::string::npos);
             std::cout << "├─ Function call: " << (has_function ? "YES" : "NO") << "\n"
                       << "├─ Correct tool: " << (has_weather_tool && has_message_tool ? "YES" : "NO") << "\n";
             m.print_json();

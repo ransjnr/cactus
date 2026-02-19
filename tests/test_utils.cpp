@@ -331,12 +331,8 @@ bool run_handoff_mode_case(const char* model_path,
         m.function_calls.find("get_weather") != std::string::npos ||
         m.function_calls.find("set_alarm") != std::string::npos;
 
-    bool ok = (rc > 0) && m.cloud_handoff;
-    if (auto_handoff) {
-        ok = ok && m.cloud_attempted;
-    } else {
-        ok = ok && !m.cloud_attempted && !m.cloud_used && (m.response_source == "local");
-    }
+    bool ok = (rc > 0);
+    if (!auto_handoff) ok = ok && !m.cloud_handoff;
     if (expect_tool_signal) {
         ok = ok && (has_function_calls || has_tool);
     } else {
@@ -345,10 +341,8 @@ bool run_handoff_mode_case(const char* model_path,
 
     std::cout << "├─ " << case_name << " [" << (auto_handoff ? "handoff_on" : "handoff_off") << "]: "
               << (ok ? "PASS" : "FAIL") << "\n";
-    std::cout << "│  response_source=" << (m.response_source.empty() ? "n/a" : m.response_source)
-              << ", cloud_attempted=" << (m.cloud_attempted ? "true" : "false")
-              << ", cloud_used=" << (m.cloud_used ? "true" : "false")
-              << ", cloud_error=" << (m.cloud_error.empty() ? "null" : m.cloud_error) << "\n";
+    std::cout << "│  cloud_handoff=" << (m.cloud_handoff ? "true" : "false")
+              << ", confidence=" << m.confidence << "\n";
     std::cout << "│  response=\"" << m.response << "\"\n";
     std::cout << "│  function_calls=" << m.function_calls << "\n";
 
@@ -389,11 +383,6 @@ void Metrics::parse(const std::string& json) {
     error = json_string(json, "error");
     cloud_handoff = json_bool(json, "cloud_handoff", false);
     response = json_string(json, "response");
-    local_output = json_string(json, "local_output");
-    response_source = json_string(json, "response_source");
-    cloud_attempted = json_bool(json, "cloud_attempted", false);
-    cloud_used = json_bool(json, "cloud_used", false);
-    cloud_error = json_string(json, "cloud_error");
     function_calls = json_array(json, "function_calls");
     confidence = json_number(json, "confidence", -1.0);
     ttft = json_number(json, "time_to_first_token_ms");
@@ -411,11 +400,6 @@ void Metrics::print_json() const {
               << "  \"error\": " << (error.empty() ? "null" : "\"" + error + "\"") << ",\n"
               << "  \"cloud_handoff\": " << (cloud_handoff ? "true" : "false") << ",\n"
               << "  \"response\": \"" << response << "\",\n"
-              << "  \"local_output\": \"" << local_output << "\",\n"
-              << "  \"response_source\": \"" << response_source << "\",\n"
-              << "  \"cloud_attempted\": " << (cloud_attempted ? "true" : "false") << ",\n"
-              << "  \"cloud_used\": " << (cloud_used ? "true" : "false") << ",\n"
-              << "  \"cloud_error\": " << (cloud_error.empty() ? "null" : "\"" + cloud_error + "\"") << ",\n"
               << "  \"function_calls\": " << function_calls << ",\n"
               << "  \"confidence\": " << std::fixed << std::setprecision(4) << confidence << ",\n"
               << "  \"time_to_first_token_ms\": " << std::setprecision(2) << ttft << ",\n"
