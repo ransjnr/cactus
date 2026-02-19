@@ -10,7 +10,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
-DEFAULT_MODEL_ID = "LiquidAI/LFM2-1.2B"
+DEFAULT_MODEL_ID = "LiquidAI/LFM2.5-1.2B-Instruct"
 
 RED = '\033[0;31m'
 GREEN = '\033[0;32m'
@@ -50,6 +50,38 @@ def run_command(cmd, cwd=None, check=True):
     if check and result.returncode != 0:
         sys.exit(result.returncode)
     return result
+
+
+def ensure_vad_weights(model_id, weights_dir, precision='INT8'):
+    """Bundle Silero VAD weights into <weights_dir>/vad/ for whisper/moonshine models."""
+    is_asr = 'whisper' in model_id.lower() or 'moonshine' in model_id.lower()
+    if not is_asr:
+        return
+    vad_dir = weights_dir / "vad"
+    if (vad_dir / "config.txt").exists():
+        return
+    try:
+        import torch
+        import urllib.request
+        import tempfile
+        from .converter import convert_silero_vad_weights
+
+        print_color(YELLOW, "Bundling VAD weights for speech model...")
+        vad_jit_url = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.jit"
+        with tempfile.NamedTemporaryFile(suffix='.jit', delete=False) as f:
+            jit_path = f.name
+        urllib.request.urlretrieve(vad_jit_url, jit_path)
+        vad_model = torch.jit.load(jit_path, map_location='cpu')
+        os.unlink(jit_path)
+
+        convert_silero_vad_weights(vad_model, str(vad_dir), precision)
+        del vad_model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        print_color(GREEN, "VAD weights bundled successfully")
+    except Exception as e:
+        print_color(RED, f"Warning: Failed to bundle VAD weights: {e}")
+        print("Transcription may fail without VAD. Try: cactus download snakers4/silero-vad")
 
 
 def download_from_hf(model_id, weights_dir, precision):
@@ -124,6 +156,7 @@ def cmd_download(args):
         shutil.rmtree(weights_dir)
 
     if weights_dir.exists() and (weights_dir / "config.txt").exists():
+        ensure_vad_weights(model_id, weights_dir, precision)
         print_color(GREEN, f"Model weights found at {weights_dir}")
         return 0
 
@@ -133,6 +166,7 @@ def cmd_download(args):
 
     if not reconvert:
         if download_from_hf(model_id, weights_dir, precision):
+            ensure_vad_weights(model_id, weights_dir, precision)
             return 0
 
     try:
@@ -232,10 +266,16 @@ def cmd_download(args):
             model = AutoModel.from_pretrained(model_id, cache_dir=cache_dir, trust_remote_code=True, token=token)
 
         elif is_vad:
+            import urllib.request
+            import tempfile
             from .converter import convert_silero_vad_weights
-            from silero_vad import load_silero_vad
 
-            model = load_silero_vad()
+            vad_jit_url = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.jit"
+            with tempfile.NamedTemporaryFile(suffix='.jit', delete=False) as f:
+                jit_path = f.name
+            urllib.request.urlretrieve(vad_jit_url, jit_path)
+            model = torch.jit.load(jit_path, map_location='cpu')
+            os.unlink(jit_path)
             convert_silero_vad_weights(model, weights_dir, precision, args)
 
             del model
@@ -378,6 +418,7 @@ def cmd_build(args):
         compiler = "clang++"
         cmd = [
             compiler, "-std=c++20", "-O3",
+            "-DACCELERATE_NEW_LAPACK",
             f"-I{PROJECT_ROOT}",
             str(chat_cpp),
             str(lib_path),
@@ -450,6 +491,7 @@ def cmd_build(args):
         if is_darwin:
             cmd = [
                 compiler, "-std=c++20", "-O3",
+                "-DACCELERATE_NEW_LAPACK",
                 f"-I{PROJECT_ROOT}",
             ]
             if sdl2_available:
