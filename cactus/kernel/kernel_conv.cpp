@@ -709,7 +709,6 @@ void cactus_stft_magnitude_f16(
 void cactus_conv1d_same_depthwise_f16_k9(
     const __fp16* input,
     const __fp16* weight,
-    const __fp16* bias,
     __fp16* output,
     size_t N, size_t L, size_t C)
 {
@@ -736,8 +735,6 @@ void cactus_conv1d_same_depthwise_f16_k9(
         const float w6 = (float)Wc[6];
         const float w7 = (float)Wc[7];
         const float w8 = (float)Wc[8];
-
-        const float b = bias ? (float)bias[c] : 0.f;
 
         const float32x4_t wv0 = {w0, w1, w2, w3};
         const float32x4_t wv1 = {w4, w5, w6, w7};
@@ -777,7 +774,7 @@ void cactus_conv1d_same_depthwise_f16_k9(
             const float32x4_t xv1_0 = {x4_0, x5_0, x6_0, x7_0};
             acc0v = vfmaq_f32(acc0v, xv0_0, wv0);
             acc0v = vfmaq_f32(acc0v, xv1_0, wv1);
-            float acc0 = b + vaddvq_f32(acc0v) + (w8 * x8_0);
+            float acc0 = vaddvq_f32(acc0v) + (w8 * x8_0);
 
             float acc1 = 0.f;
             if (have_t1) {
@@ -812,7 +809,7 @@ void cactus_conv1d_same_depthwise_f16_k9(
                 const float32x4_t xv1_1 = {x4_1, x5_1, x6_1, x7_1};
                 acc1v = vfmaq_f32(acc1v, xv0_1, wv0);
                 acc1v = vfmaq_f32(acc1v, xv1_1, wv1);
-                acc1 = b + vaddvq_f32(acc1v) + (w8 * x8_1);
+                acc1 = vaddvq_f32(acc1v) + (w8 * x8_1);
             }
 
             Yb[t0 * C + c] = (__fp16)acc0;
