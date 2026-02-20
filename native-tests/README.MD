@@ -1,7 +1,7 @@
 ### SETUP
 Have xcode.
 Install following libs:
-- iOS (if no xcode): `gem install xcodeproj`
+- iOS: `gem install xcodeproj`
 - Android: `brew install --cask android-commandlinetools temurin`, then `sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;26.3.11579264"`
 - Flutter: `brew install flutter`
 
