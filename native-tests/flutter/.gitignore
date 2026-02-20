@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Cactus native libraries
+/android/app/src/main/jniLibs/
+/ios/Runner/cactus-ios.xcframework

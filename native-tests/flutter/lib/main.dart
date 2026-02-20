@@ -1,121 +1,266 @@
 import 'package:flutter/material.dart';
+import 'cactus.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const CactusTestApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class CactusTestApp extends StatelessWidget {
+  const CactusTestApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      title: 'Cactus Flutter Test',
+      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal)),
+      home: const TestPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class TestPage extends StatefulWidget {
+  const TestPage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<TestPage> createState() => _TestPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _TestPageState extends State<TestPage> {
+  final List<String> _logs = [];
+  bool _finished = false;
+  final ScrollController _scroll = ScrollController();
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+  @override
+  void initState() {
+    super.initState();
+    _runTests();
+  }
+
+  void _log(String message) {
+    debugPrint(message);
+    setState(() => _logs.add(message));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) {
+        _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      }
     });
+  }
+
+  Future<void> _runTests() async {
+    const modelPath = String.fromEnvironment('CACTUS_TEST_MODEL');
+    const transcribePath = String.fromEnvironment('CACTUS_TEST_TRANSCRIBE_MODEL');
+    const assetsPath = String.fromEnvironment('CACTUS_TEST_ASSETS');
+    final audioPath = assetsPath.isEmpty ? '' : '$assetsPath/test.wav';
+
+    _log('=== Cactus Flutter Wrapper Test ===');
+    _log('Model:            ${modelPath.isEmpty ? "(none - set CACTUS_TEST_MODEL)" : modelPath}');
+    _log('Transcribe model: ${transcribePath.isEmpty ? "(none)" : transcribePath}');
+    _log('Assets:           ${assetsPath.isEmpty ? "(none)" : assetsPath}');
+
+    if (modelPath.isEmpty) {
+      _log('[FAIL] No model path provided');
+      setState(() => _finished = true);
+      return;
+    }
+
+    // ---------------------------------------------------------------
+    _log('\n--- Test 1: Init ---');
+    Cactus? model;
+    try {
+      model = Cactus.create(modelPath);
+      _log('[PASS] Model initialized');
+    } catch (e) {
+      _log('[FAIL] $e');
+      setState(() => _finished = true);
+      return;
+    }
+
+    // ---------------------------------------------------------------
+    _log('\n--- Test 2: Basic Completion ---');
+    try {
+      final result = model.completeMessages(
+        [Message.user('Say hello in exactly 3 words.')],
+        options: const CompletionOptions(maxTokens: 20),
+      );
+      final text = result.text.trim();
+      _log('[PASS] "$text"');
+      _log('       prompt=${result.promptTokens} completion=${result.completionTokens} decode=${result.decodeTokensPerSecond.toStringAsFixed(1)} tok/s');
+    } catch (e) {
+      _log('[FAIL] $e');
+    }
+
+    // ---------------------------------------------------------------
+    _log('\n--- Test 3: Streaming Completion ---');
+    try {
+      var tokenCount = 0;
+      final result = model.completeMessages(
+        [Message.user('Count from 1 to 5.')],
+        options: const CompletionOptions(maxTokens: 40),
+        onToken: (_, __) => tokenCount++,
+      );
+      if (tokenCount > 0) {
+        _log('[PASS] Streamed $tokenCount tokens: "${result.text.trim()}"');
+      } else {
+        _log('[FAIL] onToken callback never fired');
+      }
+    } catch (e) {
+      _log('[FAIL] $e');
+    }
+
+    // ---------------------------------------------------------------
+    _log('\n--- Test 4: Tool Calling ---');
+    try {
+      final tools = [
+        {
+          'name': 'get_weather',
+          'description': 'Get the current weather for a location',
+          'parameters': {
+            'type': 'object',
+            'properties': {
+              'location': {'type': 'string', 'description': 'City name'}
+            },
+            'required': ['location']
+          }
+        }
+      ];
+      final result = model.completeMessages(
+        [Message.user('What is the weather in Paris? Use the get_weather tool.')],
+        options: const CompletionOptions(maxTokens: 80),
+        tools: tools,
+      );
+      final calls = result.functionCalls;
+      if (calls != null && calls.isNotEmpty) {
+        final name = calls.first['name'] ?? '?';
+        final args = calls.first['arguments'] ?? {};
+        _log('[PASS] Tool call: $name($args)');
+      } else {
+        _log('[SKIP] No tool call produced (model may not support function calling)');
+      }
+    } catch (e) {
+      _log('[FAIL] $e');
+    }
+
+    // ---------------------------------------------------------------
+    _log('\n--- Test 5: Tokenization ---');
+    try {
+      final tokens = model.tokenize('Hello, world!');
+      if (tokens.isNotEmpty) {
+        _log('[PASS] ${tokens.length} tokens');
+      } else {
+        _log('[FAIL] Zero tokens returned');
+      }
+    } catch (e) {
+      _log('[FAIL] $e');
+    }
+
+    // ---------------------------------------------------------------
+    _log('\n--- Test 6: Embeddings ---');
+    try {
+      final embeddings = model.embed('Hello world');
+      if (embeddings.isNotEmpty) {
+        final norm = embeddings.fold(0.0, (s, x) => s + x * x);
+        _log('[PASS] dim=${embeddings.length} norm=${norm.toStringAsFixed(4)}');
+      } else {
+        _log('[SKIP] Empty embeddings (model may not support)');
+      }
+    } catch (e) {
+      _log('[SKIP] Not supported by this model: $e');
+    }
+
+    // ---------------------------------------------------------------
+    if (transcribePath.isNotEmpty) {
+      Cactus? transcribeModel;
+      try {
+        transcribeModel = Cactus.create(transcribePath);
+      } catch (e) {
+        _log('\n--- Test 7: Transcription --- [FAIL] Could not init transcribe model: $e');
+        _log('--- Test 8: VAD --- [SKIP]');
+        _log('\n=== Done ===');
+        setState(() => _finished = true);
+        return;
+      }
+
+      _log('\n--- Test 7: Transcription ---');
+      final audioExists = audioPath.isNotEmpty && File(audioPath).existsSync();
+      if (audioExists) {
+        try {
+          final isWhisper = transcribePath.toLowerCase().contains('whisper');
+          final prompt = isWhisper
+              ? '<|startoftranscript|><|en|><|transcribe|><|notimestamps|>'
+              : null;
+          final result = transcribeModel.transcribe(audioPath, prompt: prompt);
+          _log('[PASS] "${result.text.trim()}"');
+          _log('       time=${result.totalTime.toStringAsFixed(0)}ms');
+        } catch (e) {
+          _log('[FAIL] $e');
+        }
+      } else {
+        _log('[SKIP] test.wav not found at $audioPath');
+      }
+
+      _log('\n--- Test 8: VAD ---');
+      if (audioExists) {
+        try {
+          final result = transcribeModel.vad(audioPath);
+          _log('[PASS] ${result.segments.length} speech segment(s)');
+          for (final seg in result.segments) {
+            _log('       segment: ${seg.start}ms – ${seg.end}ms');
+          }
+        } catch (e) {
+          _log('[FAIL] $e');
+        }
+      } else {
+        _log('[SKIP] test.wav not found');
+      }
+
+      transcribeModel.dispose();
+    } else {
+      _log('\n--- Test 7: Transcription --- [SKIP] (no CACTUS_TEST_TRANSCRIBE_MODEL)');
+      _log('--- Test 8: VAD --- [SKIP] (no CACTUS_TEST_TRANSCRIBE_MODEL)');
+    }
+
+    model.dispose();
+    _log('\n=== Done ===');
+    setState(() => _finished = true);
+  }
+
+  Color _colorFor(String log) {
+    if (log.startsWith('[PASS]')) return Colors.green;
+    if (log.startsWith('[FAIL]')) return Colors.red;
+    if (log.startsWith('[SKIP]')) return Colors.orange;
+    if (log.startsWith('===')) return Colors.black;
+    return Colors.grey.shade700;
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+        title: const Text('Cactus Flutter Test'),
+        actions: [
+          if (!_finished)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
             ),
-          ],
-        ),
+        ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+      body: ListView.builder(
+        controller: _scroll,
+        padding: const EdgeInsets.all(12),
+        itemCount: _logs.length,
+        itemBuilder: (_, i) => Text(
+          _logs[i],
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 12,
+            color: _colorFor(_logs[i]),
+          ),
+        ),
       ),
     );
   }
