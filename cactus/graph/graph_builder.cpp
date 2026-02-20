@@ -285,6 +285,59 @@ size_t CactusGraph::topk(size_t input, size_t k) {
     return add_node(OpType::TOPK, {input}, output_shape, params);
 }
 
+size_t CactusGraph::moe_expert_apply(size_t accum,
+                                     size_t hidden,
+                                     size_t routing_probs,
+                                     size_t topk_indices,
+                                     size_t w1,
+                                     size_t w3,
+                                     size_t w2,
+                                     size_t expert_idx,
+                                     bool normalize_routing,
+                                     float epsilon,
+                                     float routed_scaling_factor) {
+    const auto& accum_buffer = get_output_buffer(accum);
+    const auto& hidden_buffer = get_output_buffer(hidden);
+    const auto& routing_buffer = get_output_buffer(routing_probs);
+    const auto& topk_buffer = get_output_buffer(topk_indices);
+    const auto& w1_buffer = get_output_buffer(w1);
+    const auto& w3_buffer = get_output_buffer(w3);
+    const auto& w2_buffer = get_output_buffer(w2);
+
+    if (accum_buffer.shape.size() != 2 || hidden_buffer.shape.size() != 2) {
+        throw std::runtime_error("moe_expert_apply expects [tokens, hidden] for accum and hidden");
+    }
+    if (accum_buffer.shape != hidden_buffer.shape) {
+        throw std::runtime_error("moe_expert_apply expects accum and hidden to have identical shapes");
+    }
+    if (routing_buffer.shape.size() != 2 || topk_buffer.shape.size() != 2) {
+        throw std::runtime_error("moe_expert_apply expects 2D routing_probs and topk_indices");
+    }
+    if (routing_buffer.shape[0] != hidden_buffer.shape[0] || topk_buffer.shape[0] != hidden_buffer.shape[0]) {
+        throw std::runtime_error("moe_expert_apply token dimension mismatch across inputs");
+    }
+    if (w1_buffer.shape.size() != 2 || w3_buffer.shape.size() != 2 || w2_buffer.shape.size() != 2) {
+        throw std::runtime_error("moe_expert_apply expects 2D expert weights");
+    }
+    if (w1_buffer.shape != w3_buffer.shape) {
+        throw std::runtime_error("moe_expert_apply expects expert w1 and w3 to have identical shapes");
+    }
+    if (w1_buffer.shape[1] != hidden_buffer.shape[1]) {
+        throw std::runtime_error("moe_expert_apply expects expert w1/w3 second dim to match hidden_dim");
+    }
+    if (w2_buffer.shape[1] != w1_buffer.shape[0] || w2_buffer.shape[0] != hidden_buffer.shape[1]) {
+        throw std::runtime_error("moe_expert_apply expects expert w2 shape [hidden_dim, intermediate_dim]");
+    }
+
+    OpParams params;
+    params.index_value = expert_idx;
+    params.normalize_routing = normalize_routing;
+    params.epsilon = epsilon;
+    params.scalar = routed_scaling_factor;
+    params.output_precision = accum_buffer.precision;
+    return add_node(OpType::MOE_EXPERT_APPLY, {accum, hidden, routing_probs, topk_indices, w1, w3, w2}, accum_buffer.shape, params);
+}
+
 size_t CactusGraph::layernorm(size_t input, size_t weight, size_t bias, float epsilon) {
     OpParams params{.epsilon = epsilon};
     return add_node(OpType::LAYERNORM, {input, weight, bias}, {}, params);

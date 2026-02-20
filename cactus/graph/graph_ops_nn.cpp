@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <cmath>
 #include <assert.h>
+#include <algorithm>
 
 namespace {
     thread_local std::vector<__fp16> transpose_buffer_fp16;
@@ -64,6 +65,7 @@ namespace {
         cached_quant_M = M;
         cached_quant_K = K;
     }
+
 }
 
 void shrink_thread_local_buffers() {
@@ -201,6 +203,191 @@ void compute_matmul_node(GraphNode& node, const std::vector<std::unique_ptr<Grap
             cactus_transpose_2d_f16(rhs, transpose_buffer_fp16.data(),
                                     rhs_shape[0], rhs_shape[1], 0, rhs_shape[0]);
             cactus_matmul_f16(lhs, transpose_buffer_fp16.data(), output, M, K, N);
+        }
+    }
+}
+
+namespace {
+    void matmul_with_expert_weight(const __fp16* lhs,
+                                   size_t M,
+                                   size_t K,
+                                   const BufferDesc& rhs_buffer,
+                                   __fp16* output,
+                                   size_t N) {
+        if (rhs_buffer.precision == Precision::FP16) {
+            cactus_matmul_f16(lhs, rhs_buffer.data_as<__fp16>(), output, M, K, N);
+            return;
+        }
+
+        if (rhs_buffer.precision == Precision::INT8 && rhs_buffer.is_grouped_int8()) {
+            std::vector<int8_t> lhs_q(M * K);
+            std::vector<float> lhs_scales(M);
+            for (size_t row = 0; row < M; ++row) {
+                float scale = cactus_fp16_max_abs(lhs + row * K, K) / 127.0f;
+                if (scale < 1e-10f) {
+                    scale = 1e-10f;
+                }
+                lhs_scales[row] = scale;
+                cactus_fp16_to_int8(lhs + row * K, lhs_q.data() + row * K, K, scale);
+            }
+
+            cactus_matmul_int8(lhs_q.data(),
+                               lhs_scales.data(),
+                               rhs_buffer.data_as<int8_t>(),
+                               rhs_buffer.scales_as_fp16(),
+                               output,
+                               M, K, N, rhs_buffer.group_size);
+            return;
+        }
+
+        throw std::runtime_error("moe_expert_apply only supports FP16 or grouped INT8 expert weights");
+    }
+
+    size_t rounded_expert_index(float raw_idx, size_t num_experts) {
+        if (!std::isfinite(raw_idx)) {
+            throw std::runtime_error("moe_expert_apply got non-finite expert index");
+        }
+        size_t idx = static_cast<size_t>(raw_idx + 0.5f);
+        if (idx >= num_experts) {
+            throw std::runtime_error("moe_expert_apply got expert index out of range");
+        }
+        return idx;
+    }
+}
+
+void compute_moe_expert_apply_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map) {
+    if (node.input_ids.size() != 7) {
+        throw std::runtime_error("moe_expert_apply expects 7 inputs");
+    }
+
+    const auto& accum_buffer = nodes[node_index_map.at(node.input_ids[0])]->output_buffer;
+    const auto& hidden_buffer = nodes[node_index_map.at(node.input_ids[1])]->output_buffer;
+    const auto& routing_buffer = nodes[node_index_map.at(node.input_ids[2])]->output_buffer;
+    const auto& topk_idx_buffer = nodes[node_index_map.at(node.input_ids[3])]->output_buffer;
+    const auto& w1_buffer = nodes[node_index_map.at(node.input_ids[4])]->output_buffer;
+    const auto& w3_buffer = nodes[node_index_map.at(node.input_ids[5])]->output_buffer;
+    const auto& w2_buffer = nodes[node_index_map.at(node.input_ids[6])]->output_buffer;
+
+    if (accum_buffer.precision != Precision::FP16 || hidden_buffer.precision != Precision::FP16 ||
+        node.output_buffer.precision != Precision::FP16) {
+        throw std::runtime_error("moe_expert_apply expects FP16 accum/hidden/output");
+    }
+    if (accum_buffer.shape.size() != 2 || hidden_buffer.shape.size() != 2 ||
+        routing_buffer.shape.size() != 2 || topk_idx_buffer.shape.size() != 2 ||
+        w1_buffer.shape.size() != 2 || w3_buffer.shape.size() != 2 || w2_buffer.shape.size() != 2) {
+        throw std::runtime_error("moe_expert_apply expects rank-2 tensors");
+    }
+    if (accum_buffer.shape != hidden_buffer.shape) {
+        throw std::runtime_error("moe_expert_apply expects accum and hidden to have identical shape");
+    }
+
+    const size_t token_count = hidden_buffer.shape[0];
+    const size_t hidden_dim = hidden_buffer.shape[1];
+    const size_t num_experts = routing_buffer.shape[1];
+    const size_t top_k = topk_idx_buffer.shape[1];
+    const size_t expert_intermediate_dim = w1_buffer.shape[0];
+    const size_t expert_idx = node.params.index_value;
+    const bool normalize_routing = node.params.normalize_routing;
+    const float eps = node.params.epsilon;
+    const float routed_scaling_factor = node.params.scalar;
+
+    if (expert_idx >= num_experts) {
+        throw std::runtime_error("moe_expert_apply expert index is out of range");
+    }
+    if (routing_buffer.shape[0] != token_count || topk_idx_buffer.shape[0] != token_count) {
+        throw std::runtime_error("moe_expert_apply token dimensions do not match");
+    }
+    if (topk_idx_buffer.precision != Precision::FP32) {
+        throw std::runtime_error("moe_expert_apply expects FP32 topk indices");
+    }
+    if (routing_buffer.precision != Precision::FP16 && routing_buffer.precision != Precision::FP32) {
+        throw std::runtime_error("moe_expert_apply expects routing_probs precision FP16 or FP32");
+    }
+    if (w1_buffer.shape != w3_buffer.shape || w1_buffer.shape[1] != hidden_dim) {
+        throw std::runtime_error("moe_expert_apply invalid w1/w3 shapes");
+    }
+    if (w2_buffer.shape[0] != hidden_dim || w2_buffer.shape[1] != expert_intermediate_dim) {
+        throw std::runtime_error("moe_expert_apply invalid w2 shape");
+    }
+
+    const auto* hidden = hidden_buffer.data_as<__fp16>();
+    const auto* accum = accum_buffer.data_as<__fp16>();
+    auto* output = node.output_buffer.data_as<__fp16>();
+    const auto* topk_idx = topk_idx_buffer.data_as<float>();
+    const auto* routing_fp16 = routing_buffer.precision == Precision::FP16 ? routing_buffer.data_as<__fp16>() : nullptr;
+    const auto* routing_fp32 = routing_buffer.precision == Precision::FP32 ? routing_buffer.data_as<float>() : nullptr;
+
+    auto routing_prob = [&](size_t tok, size_t exp) -> float {
+        const size_t offset = tok * num_experts + exp;
+        if (routing_fp16) {
+            return static_cast<float>(routing_fp16[offset]);
+        }
+        return routing_fp32[offset];
+    };
+
+    std::vector<size_t> selected_tokens;
+    selected_tokens.reserve(token_count / 4 + 1);
+    for (size_t tok = 0; tok < token_count; ++tok) {
+        bool selected = false;
+        for (size_t k = 0; k < top_k; ++k) {
+            const size_t idx = rounded_expert_index(topk_idx[tok * top_k + k], num_experts);
+            if (idx == expert_idx) {
+                selected = true;
+                break;
+            }
+        }
+        if (selected) {
+            selected_tokens.push_back(tok);
+        }
+    }
+    std::memcpy(output, accum, token_count * hidden_dim * sizeof(__fp16));
+    if (selected_tokens.empty()) {
+        return;
+    }
+
+    const size_t selected_count = selected_tokens.size();
+    std::vector<__fp16> compact_hidden(selected_count * hidden_dim);
+    for (size_t i = 0; i < selected_count; ++i) {
+        const size_t tok = selected_tokens[i];
+        std::memcpy(compact_hidden.data() + i * hidden_dim,
+                    hidden + tok * hidden_dim,
+                    hidden_dim * sizeof(__fp16));
+    }
+
+    std::vector<__fp16> gate(selected_count * expert_intermediate_dim);
+    std::vector<__fp16> up(selected_count * expert_intermediate_dim);
+    std::vector<__fp16> expert_out(selected_count * hidden_dim);
+
+    matmul_with_expert_weight(compact_hidden.data(), selected_count, hidden_dim, w1_buffer, gate.data(), expert_intermediate_dim);
+    cactus_silu_f16(gate.data(), gate.data(), gate.size());
+    matmul_with_expert_weight(compact_hidden.data(), selected_count, hidden_dim, w3_buffer, up.data(), expert_intermediate_dim);
+    cactus_multiply_f16(gate.data(), up.data(), gate.data(), gate.size());
+    matmul_with_expert_weight(gate.data(), selected_count, expert_intermediate_dim, w2_buffer, expert_out.data(), hidden_dim);
+
+    for (size_t i = 0; i < selected_count; ++i) {
+        const size_t tok = selected_tokens[i];
+        float expert_prob = routing_prob(tok, expert_idx);
+        if (expert_prob <= 0.0f) {
+            continue;
+        }
+
+        float route_weight = expert_prob;
+        if (normalize_routing) {
+            float sum_probs = 0.0f;
+            for (size_t k = 0; k < top_k; ++k) {
+                const size_t idx = rounded_expert_index(topk_idx[tok * top_k + k], num_experts);
+                sum_probs += routing_prob(tok, idx);
+            }
+            route_weight = expert_prob / (sum_probs + eps);
+        }
+        route_weight *= routed_scaling_factor;
+
+        auto* out_row = output + tok * hidden_dim;
+        const auto* expert_row = expert_out.data() + i * hidden_dim;
+        for (size_t h = 0; h < hidden_dim; ++h) {
+            const float accum_val = static_cast<float>(out_row[h]);
+            const float add_val = static_cast<float>(expert_row[h]) * route_weight;
+            out_row[h] = static_cast<__fp16>(accum_val + add_val);
         }
     }
 }
