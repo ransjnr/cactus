@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'cactus.dart';
 
@@ -47,9 +48,12 @@ class _TestPageState extends State<TestPage> {
   }
 
   Future<void> _runTests() async {
-    const modelPath = String.fromEnvironment('CACTUS_TEST_MODEL');
-    const transcribePath = String.fromEnvironment('CACTUS_TEST_TRANSCRIBE_MODEL');
-    const assetsPath = String.fromEnvironment('CACTUS_TEST_ASSETS');
+    final modelPath = Platform.environment['CACTUS_TEST_MODEL']
+        ?? const String.fromEnvironment('CACTUS_TEST_MODEL');
+    final transcribePath = Platform.environment['CACTUS_TEST_TRANSCRIBE_MODEL']
+        ?? const String.fromEnvironment('CACTUS_TEST_TRANSCRIBE_MODEL');
+    final assetsPath = Platform.environment['CACTUS_TEST_ASSETS']
+        ?? const String.fromEnvironment('CACTUS_TEST_ASSETS');
     final audioPath = assetsPath.isEmpty ? '' : '$assetsPath/test.wav';
 
     _log('=== Cactus Flutter Wrapper Test ===');
@@ -60,7 +64,7 @@ class _TestPageState extends State<TestPage> {
     if (modelPath.isEmpty) {
       _log('[FAIL] No model path provided');
       setState(() => _finished = true);
-      return;
+      exit(1);
     }
 
     // ---------------------------------------------------------------
@@ -72,7 +76,7 @@ class _TestPageState extends State<TestPage> {
     } catch (e) {
       _log('[FAIL] $e');
       setState(() => _finished = true);
-      return;
+      exit(1);
     }
 
     // ---------------------------------------------------------------
@@ -177,7 +181,7 @@ class _TestPageState extends State<TestPage> {
         _log('--- Test 8: VAD --- [SKIP]');
         _log('\n=== Done ===');
         setState(() => _finished = true);
-        return;
+        exit(1);
       }
 
       _log('\n--- Test 7: Transcription ---');
@@ -222,6 +226,7 @@ class _TestPageState extends State<TestPage> {
     model.dispose();
     _log('\n=== Done ===');
     setState(() => _finished = true);
+    exit(0);
   }
 
   Color _colorFor(String log) {

@@ -6,13 +6,21 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		77D24FE3C718659AA3D5583C /* Cactus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 616FAD027E53ADE7130FBA42 /* Cactus.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		12A66FC02F485AB200E740C5 /* CactusSwiftTest.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CactusSwiftTest.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		616FAD027E53ADE7130FBA42 /* Cactus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Cactus.swift; sourceTree = "<group>"; };
+		C4E6F5FECA61754D9202D4B7 /* Cactus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Cactus.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		12A66FC22F485AB200E740C5 /* CactusSwiftTest */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = CactusSwiftTest;
 			sourceTree = "<group>";
 		};
@@ -34,6 +42,7 @@
 			children = (
 				12A66FC22F485AB200E740C5 /* CactusSwiftTest */,
 				12A66FC12F485AB200E740C5 /* Products */,
+				A782ADBFBB7C0D45F706BCCC /* CactusLib */,
 			);
 			sourceTree = "<group>";
 		};
@@ -44,6 +53,15 @@
 			);
 			name = Products;
 			sourceTree = "<group>";
+		};
+		A782ADBFBB7C0D45F706BCCC /* CactusLib */ = {
+			isa = PBXGroup;
+			children = (
+				616FAD027E53ADE7130FBA42 /* Cactus.swift */,
+			);
+			name = CactusLib;
+			path = /Users/justinl/Desktop/GitRepos/cactus/apple;
+			sourceTree = "<absolute>";
 		};
 /* End PBXGroup section */
 
@@ -64,8 +82,6 @@
 				12A66FC22F485AB200E740C5 /* CactusSwiftTest */,
 			);
 			name = CactusSwiftTest;
-			packageProductDependencies = (
-			);
 			productName = CactusSwiftTest;
 			productReference = 12A66FC02F485AB200E740C5 /* CactusSwiftTest.app */;
 			productType = "com.apple.product-type.application";
@@ -119,6 +135,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				77D24FE3C718659AA3D5583C /* Cactus.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -246,10 +263,16 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					/Users/justinl/Desktop/GitRepos/cactus/cactus,
+					/Users/justinl/Desktop/GitRepos/cactus/cactus/ffi,
+				);
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -260,12 +283,23 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.cactus.nativetest.CactusSwiftTest;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"/Users/justinl/Desktop/GitRepos/cactus/apple/libcactus-simulator.a",
+					"-framework CoreML",
+					"-framework Foundation",
+					"-framework Accelerate",
+					"-framework Security",
+					"-framework SystemConfiguration",
+					"-framework CFNetwork",
+					/Users/justinl/Desktop/GitRepos/cactus/libs/curl/ios/simulator/libcurl.a,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cactus.nativetest.justinl;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -274,6 +308,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INCLUDE_PATHS = "$(inherited) /Users/justinl/Desktop/GitRepos/cactus/native-tests/ios/CactusSwiftTest/../build/cactus_module";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
@@ -288,10 +323,16 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					/Users/justinl/Desktop/GitRepos/cactus/cactus,
+					/Users/justinl/Desktop/GitRepos/cactus/cactus/ffi,
+				);
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -302,12 +343,23 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.cactus.nativetest.CactusSwiftTest;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"/Users/justinl/Desktop/GitRepos/cactus/apple/libcactus-simulator.a",
+					"-framework CoreML",
+					"-framework Foundation",
+					"-framework Accelerate",
+					"-framework Security",
+					"-framework SystemConfiguration",
+					"-framework CFNetwork",
+					/Users/justinl/Desktop/GitRepos/cactus/libs/curl/ios/simulator/libcurl.a,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cactus.nativetest.justinl;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -316,6 +368,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INCLUDE_PATHS = "$(inherited) /Users/justinl/Desktop/GitRepos/cactus/native-tests/ios/CactusSwiftTest/../build/cactus_module";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";

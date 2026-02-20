@@ -64,7 +64,7 @@ if ! "$PROJECT_ROOT/android/build.sh"; then
 fi
 
 mkdir -p "$SCRIPT_DIR/app/src/main/jniLibs/arm64-v8a"
-cp "$PROJECT_ROOT/android/build/libcactus.so" "$SCRIPT_DIR/app/src/main/jniLibs/arm64-v8a/"
+cp "$PROJECT_ROOT/android/libcactus.so" "$SCRIPT_DIR/app/src/main/jniLibs/arm64-v8a/"
 echo "Copied libcactus.so"
 
 # ---------------------------------------------------------------

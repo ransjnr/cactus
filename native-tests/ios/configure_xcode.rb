@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 require 'xcodeproj'
+require 'fileutils'
 
 def fail_with(message)
   STDERR.puts "Error: #{message}"
@@ -36,8 +37,7 @@ cactus_swift_path = File.join(apple_dir, 'Cactus.swift')
 fail_with("Cactus.swift not found at: #{cactus_swift_path}") unless File.exist?(cactus_swift_path)
 
 lib_group = project.main_group.new_group('CactusLib', apple_dir, '<absolute>')
-ref = lib_group.new_reference(cactus_swift_path)
-ref.set_source_tree('<absolute>')
+ref = lib_group.new_reference('Cactus.swift')
 target.source_build_phase.add_file_reference(ref)
 puts "Added Cactus.swift from #{cactus_swift_path}"
 
@@ -50,9 +50,18 @@ if curl_root && !curl_root.empty?
   vendored_curl_lib = nil unless File.exist?(vendored_curl_lib.to_s)
 end
 
+# framework module requires the umbrella header in a Headers/ subdir alongside
+# the .modulemap. Copy cactus_ffi.h there and generate the module map.
+custom_modulemap_dir = File.join(File.dirname(xcodeproj_path), '..', 'build', 'cactus_module')
+headers_dir = File.join(custom_modulemap_dir, 'Headers')
+FileUtils.mkdir_p(headers_dir)
+cactus_ffi_h = File.join(cactus_dir, 'ffi', 'cactus_ffi.h')
+FileUtils.cp(cactus_ffi_h, headers_dir)
+File.write(File.join(custom_modulemap_dir, 'module.modulemap'),
+  "framework module cactus {\n  umbrella header \"cactus_ffi.h\"\n  export *\n  module * { export * }\n}\n")
+
 target.build_configurations.each do |config|
-  # Swift needs the module map from apple/ to resolve `import cactus`
-  config.build_settings['SWIFT_INCLUDE_PATHS'] = ['$(inherited)', apple_dir]
+  config.build_settings['SWIFT_INCLUDE_PATHS'] = ['$(inherited)', custom_modulemap_dir]
 
   # C headers for the module map's umbrella header (cactus_ffi.h)
   config.build_settings['HEADER_SEARCH_PATHS'] = [
@@ -61,7 +70,7 @@ target.build_configurations.each do |config|
     File.join(cactus_dir, 'ffi')
   ]
 
-  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
   config.build_settings['SWIFT_VERSION'] = '5.0'
   config.build_settings['CODE_SIGN_STYLE'] = 'Automatic'
   config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = bundle_id

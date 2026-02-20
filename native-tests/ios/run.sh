@@ -129,7 +129,7 @@ fi
 
 if ! gem list xcodeproj -i &>/dev/null; then
     echo "Installing xcodeproj gem..."
-    gem install xcodeproj || { echo "Failed - try: brew install rbenv && rbenv install && gem install xcodeproj"; exit 1; }
+    gem install --user-install xcodeproj || { echo "Failed - try: brew install rbenv && rbenv install && gem install xcodeproj"; exit 1; }
 fi
 
 export PROJECT_ROOT XCODEPROJ_PATH="$xcodeproj_path" BUNDLE_ID="$bundle_id" \
@@ -154,10 +154,10 @@ if [ "$device_type" = "simulator" ]; then
          -derivedDataPath "$SCRIPT_DIR/build" \
          ARCHS=arm64 \
          ONLY_ACTIVE_ARCH=NO \
-         IPHONEOS_DEPLOYMENT_TARGET=13.0 \
+         IPHONEOS_DEPLOYMENT_TARGET=14.0 \
          SDKROOT="$sdk_path" \
          PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" \
-         build 2>&1 | tail -20; then
+         build 2>&1 | grep -E "error:|warning:|BUILD FAILED|BUILD SUCCEEDED" | grep -v "^$" | tail -40; then
         echo "Build failed"
         exit 1
     fi
@@ -172,11 +172,11 @@ else
          -allowProvisioningUpdates \
          ARCHS=arm64 \
          ONLY_ACTIVE_ARCH=NO \
-         IPHONEOS_DEPLOYMENT_TARGET=13.0 \
+         IPHONEOS_DEPLOYMENT_TARGET=14.0 \
          SDKROOT="$sdk_path" \
          PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" \
          CODE_SIGN_STYLE=Automatic \
-         build 2>&1 | tail -20; then
+         build 2>&1 | grep -E "error:|warning:|BUILD FAILED|BUILD SUCCEEDED" | grep -v "^$" | tail -40; then
         echo "Build failed"
         exit 1
     fi
