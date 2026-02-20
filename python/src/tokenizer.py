@@ -1,5 +1,4 @@
 import json
-from typing import Optional
 from pathlib import Path
 
 try:
@@ -22,7 +21,7 @@ def _find_sp_model(repo_id, token=None):
         try:
             if repo := next((r for r in scan_cache_dir().repos if r.repo_id == repo_id), None):
                 latest = max(repo.revisions, key=lambda r: r.last_modified)
-                sp_file = next((f.file_name for f in latest.files if f.file_name.endswith('.model')), None)
+                sp_file = next((f.file_name for f in latest.files if f.file_name.endswith('.model') and '/' not in f.file_name), None)
         except Exception:
             pass
     if not sp_file and list_repo_files:
