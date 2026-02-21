@@ -7,13 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		24FC8E7C26BF57EC6F2C8CAF /* Cactus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BCF430266F1B9394B4BA3C0 /* Cactus.swift */; };
+		A3D4C82A868115A6F52C0014 /* Cactus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52AEC05F91F043D08ECAC0F6 /* Cactus.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		12A66FC02F485AB200E740C5 /* CactusSwiftTest.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CactusSwiftTest.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		1BCF430266F1B9394B4BA3C0 /* Cactus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Cactus.swift; sourceTree = "<group>"; };
-		CE44D3B3AEE7B343C90A55C5 /* Cactus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Cactus.swift; sourceTree = "<group>"; };
+		52AEC05F91F043D08ECAC0F6 /* Cactus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Cactus.swift; sourceTree = "<group>"; };
+		B36214BF6069CAF569C75831 /* Cactus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Cactus.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -42,7 +42,7 @@
 			children = (
 				12A66FC22F485AB200E740C5 /* CactusSwiftTest */,
 				12A66FC12F485AB200E740C5 /* Products */,
-				1BE1A049DAC244605533B8CB /* CactusLib */,
+				F491B71A9ED776BC742516F4 /* CactusLib */,
 			);
 			sourceTree = "<group>";
 		};
@@ -54,10 +54,10 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		1BE1A049DAC244605533B8CB /* CactusLib */ = {
+		F491B71A9ED776BC742516F4 /* CactusLib */ = {
 			isa = PBXGroup;
 			children = (
-				1BCF430266F1B9394B4BA3C0 /* Cactus.swift */,
+				52AEC05F91F043D08ECAC0F6 /* Cactus.swift */,
 			);
 			name = CactusLib;
 			path = /Users/justinl/Desktop/GitRepos/cactus/apple;
@@ -135,7 +135,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				24FC8E7C26BF57EC6F2C8CAF /* Cactus.swift in Sources */,
+				A3D4C82A868115A6F52C0014 /* Cactus.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

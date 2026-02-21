@@ -13,11 +13,6 @@ echo "======================================="
 # Prerequisites
 # ---------------------------------------------------------------
 
-if ! command -v adb &>/dev/null; then
-    echo "adb not found. Run: sdkmanager \"platform-tools\""
-    exit 1
-fi
-
 if [ -z "$JAVA_HOME" ]; then
     jdk21=$(/usr/libexec/java_home -v 21 2>/dev/null)
     if [ -n "$jdk21" ]; then
@@ -34,6 +29,13 @@ if [ -z "$ANDROID_HOME" ]; then
         echo "ANDROID_HOME not set and SDK not found at default locations"
         exit 1
     fi
+fi
+
+export PATH="$ANDROID_HOME/platform-tools:$PATH"
+
+if ! command -v adb &>/dev/null; then
+    echo "adb not found. Run: sdkmanager \"platform-tools\""
+    exit 1
 fi
 
 if ! adb devices | grep -q "device$"; then
@@ -183,4 +185,7 @@ adb shell am start -n "com.cactus.nativetest/.MainActivity" \
 
 echo ""
 echo "Streaming logcat (exits when tests complete)..."
-adb logcat -s System.out:I | awk '/\S/{print} /=== Done ===/{exit}'
+while IFS= read -r line; do
+    [[ -n "$line" ]] && echo "$line"
+    [[ "$line" == *"=== Done ==="* ]] && break
+done < <(adb logcat -s System.out:I)

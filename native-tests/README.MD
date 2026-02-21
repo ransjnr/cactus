@@ -27,6 +27,8 @@ Android (defaults to LFM2-VL-450M + whisper-small)
 
 Flutter (defaults to LFM2-VL-450M + whisper-small)
 ./flutter/run.sh [model] [transcribe_model] [android|ios]
+./flutter/run.sh LFM2-VL-450M whisper-small ios
+./flutter/run.sh LFM2-VL-450M whisper-small android
 
 
 ### USAGE

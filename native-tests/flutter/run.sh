@@ -40,6 +40,15 @@ if [ "$PLATFORM" = "android" ]; then
         [ -n "$jdk21" ] && export JAVA_HOME="$jdk21"
     fi
 
+    if [ -z "$ANDROID_HOME" ]; then
+        if [ -d "/opt/homebrew/share/android-commandlinetools" ]; then
+            export ANDROID_HOME="/opt/homebrew/share/android-commandlinetools"
+        elif [ -d "$HOME/Library/Android/sdk" ]; then
+            export ANDROID_HOME="$HOME/Library/Android/sdk"
+        fi
+    fi
+    [ -n "$ANDROID_HOME" ] && export PATH="$ANDROID_HOME/platform-tools:$PATH"
+
     if ! command -v adb &>/dev/null; then
         echo "adb not found - install Android SDK platform-tools"
         exit 1
@@ -118,6 +127,7 @@ if [ "$PLATFORM" = "android" ]; then
         exit 1
     fi
     echo "Using device: $android_device"
+    cd "$SCRIPT_DIR"
     flutter run \
         "--dart-define=CACTUS_TEST_MODEL=$android_model_path" \
         "--dart-define=CACTUS_TEST_TRANSCRIBE_MODEL=$android_transcribe_path" \

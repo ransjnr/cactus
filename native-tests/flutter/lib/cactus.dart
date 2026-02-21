@@ -474,18 +474,18 @@ class CompletionResult {
 
   factory CompletionResult.fromJson(Map<String, dynamic> json) {
     return CompletionResult(
-      text: json['text'] ?? '',
+      text: json['response'] ?? '',
       functionCalls: json['function_calls'] != null
           ? List<Map<String, dynamic>>.from(json['function_calls'])
           : null,
-      promptTokens: json['prompt_tokens'] ?? 0,
-      completionTokens: json['completion_tokens'] ?? 0,
-      timeToFirstToken: (json['time_to_first_token'] ?? 0.0).toDouble(),
-      totalTime: (json['total_time'] ?? 0.0).toDouble(),
-      prefillTokensPerSecond: (json['prefill_tokens_per_second'] ?? 0.0).toDouble(),
-      decodeTokensPerSecond: (json['decode_tokens_per_second'] ?? 0.0).toDouble(),
+      promptTokens: json['prefill_tokens'] ?? 0,
+      completionTokens: json['decode_tokens'] ?? 0,
+      timeToFirstToken: (json['time_to_first_token_ms'] ?? 0.0).toDouble(),
+      totalTime: (json['total_time_ms'] ?? 0.0).toDouble(),
+      prefillTokensPerSecond: (json['prefill_tps'] ?? 0.0).toDouble(),
+      decodeTokensPerSecond: (json['decode_tps'] ?? 0.0).toDouble(),
       confidence: (json['confidence'] ?? 1.0).toDouble(),
-      needsCloudHandoff: json['needs_cloud_handoff'] ?? false,
+      needsCloudHandoff: json['cloud_handoff'] ?? false,
     );
   }
 }
@@ -520,11 +520,11 @@ class TranscriptionResult {
 
   factory TranscriptionResult.fromJson(Map<String, dynamic> json) {
     return TranscriptionResult(
-      text: json['text'] ?? '',
+      text: json['response'] ?? '',
       segments: json['segments'] != null
           ? List<Map<String, dynamic>>.from(json['segments'])
           : null,
-      totalTime: (json['total_time'] ?? 0.0).toDouble(),
+      totalTime: (json['total_time_ms'] ?? 0.0).toDouble(),
     );
   }
 }
@@ -737,7 +737,7 @@ class Cactus {
         outTokenLen,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Tokenization failed: ${getLastError()}');
       }
 
@@ -773,7 +773,7 @@ class Cactus {
         bufferSize,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Score window failed: ${getLastError()}');
       }
 
@@ -928,7 +928,7 @@ class Cactus {
         embeddingDim,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Image embedding failed: ${getLastError()}');
       }
 
@@ -958,7 +958,7 @@ class Cactus {
         embeddingDim,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Audio embedding failed: ${getLastError()}');
       }
 
@@ -1074,7 +1074,7 @@ class Cactus {
         topK,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('RAG query failed: ${getLastError()}');
       }
 
@@ -1127,7 +1127,7 @@ class StreamTranscriber {
 
     try {
       final result = _cactusStreamTranscribeInsert(_handle, pcmBuffer, pcmData.length);
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Stream insert failed: ${Cactus.getLastError()}');
       }
     } finally {
@@ -1151,7 +1151,7 @@ class StreamTranscriber {
         optionsPtr,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Stream process failed: ${Cactus.getLastError()}');
       }
 
@@ -1177,7 +1177,7 @@ class StreamTranscriber {
         bufferSize,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Stream finalize failed: ${Cactus.getLastError()}');
       }
 
@@ -1275,7 +1275,7 @@ class CactusIndex {
         embeddingDim,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Index add failed: ${Cactus.getLastError()}');
       }
     } finally {
@@ -1301,7 +1301,7 @@ class CactusIndex {
 
     try {
       final result = _cactusIndexDelete(_handle, idsPtr, ids.length);
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Index delete failed: ${Cactus.getLastError()}');
       }
     } finally {
@@ -1341,7 +1341,7 @@ class CactusIndex {
         scoreBufferSizes,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Index query failed: ${Cactus.getLastError()}');
       }
 
@@ -1372,7 +1372,7 @@ class CactusIndex {
   void compact() {
     _checkNotDisposed();
     final result = _cactusIndexCompact(_handle);
-    if (result != 0) {
+    if (result < 0) {
       throw CactusException('Index compact failed: ${Cactus.getLastError()}');
     }
   }
