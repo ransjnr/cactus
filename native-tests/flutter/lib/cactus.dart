@@ -682,7 +682,14 @@ class Cactus {
     final toolsPtr = toolsJson?.toNativeUtf8() ?? nullptr;
 
     Pointer<NativeFunction<TokenCallbackNative>> callbackPtr = nullptr;
+    NativeCallable<TokenCallbackNative>? nativeCallable;
     if (onToken != null) {
+      nativeCallable = NativeCallable<TokenCallbackNative>.isolateLocal(
+        (Pointer<Utf8> token, int tokenId, Pointer<Void> _) {
+          onToken(token.toDartString(), tokenId);
+        },
+      );
+      callbackPtr = nativeCallable.nativeFunction;
     }
 
     try {
@@ -697,7 +704,7 @@ class Cactus {
         nullptr,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Completion failed: ${getLastError()}');
       }
 
@@ -709,6 +716,7 @@ class Cactus {
       calloc.free(messagesPtr);
       calloc.free(optionsPtr);
       if (toolsPtr != nullptr) calloc.free(toolsPtr);
+      nativeCallable?.close();
     }
   }
 
@@ -804,7 +812,7 @@ class Cactus {
         0,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Transcription failed: ${getLastError()}');
       }
 
@@ -848,7 +856,7 @@ class Cactus {
         pcmData.length,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Transcription failed: ${getLastError()}');
       }
 
@@ -890,7 +898,7 @@ class Cactus {
         normalize,
       );
 
-      if (result != 0) {
+      if (result < 0) {
         throw CactusException('Embedding failed: ${getLastError()}');
       }
 

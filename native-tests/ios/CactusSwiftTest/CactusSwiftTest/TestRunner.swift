@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 class TestRunner: ObservableObject {
     @Published var logs: [String] = []
@@ -184,6 +185,9 @@ class TestRunner: ObservableObject {
     }
 
     private func finish() {
-        DispatchQueue.main.async { self.finished = true }
+        DispatchQueue.main.async {
+            self.finished = true
+            exit(0)
+        }
     }
 }
