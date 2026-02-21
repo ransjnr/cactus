@@ -1,0 +1,8 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+captures/
+app/src/main/jniLibs/
+app/src/main/java/com/cactus/Cactus.kt

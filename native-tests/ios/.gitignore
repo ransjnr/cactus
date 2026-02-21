@@ -1,0 +1,16 @@
+# Xcode
+build/
+*.xcworkspace
+xcuserdata/
+*.xccheckout
+*.moved-aside
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.pbxproj.bak
+
+# Build artifacts
+libcactus-simulator.a
+libcactus-device.a
