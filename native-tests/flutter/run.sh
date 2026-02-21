@@ -35,6 +35,20 @@ assets_src="$PROJECT_ROOT/tests/assets"
 # ---------------------------------------------------------------
 
 if [ "$PLATFORM" = "android" ]; then
+    if [ -z "$JAVA_HOME" ]; then
+        jdk21=$(/usr/libexec/java_home -v 21 2>/dev/null)
+        [ -n "$jdk21" ] && export JAVA_HOME="$jdk21"
+    fi
+
+    if ! command -v adb &>/dev/null; then
+        echo "adb not found - install Android SDK platform-tools"
+        exit 1
+    fi
+    if ! adb devices | grep -q "device$"; then
+        echo "No Android device/emulator connected - connect one or start an emulator"
+        exit 1
+    fi
+
     echo ""
     echo "Step 1: Building Android native library..."
     if ! "$PROJECT_ROOT/android/build.sh"; then
@@ -56,7 +70,7 @@ if [ "$PLATFORM" = "android" ]; then
 
     echo ""
     echo "Step 4: Pushing models and assets to device..."
-    DEVICE_DATA_DIR="/sdcard/Android/data/com.cactus.cactus_flutter_test/files/cactus_test"
+    DEVICE_DATA_DIR="/data/local/tmp/cactus_test"
     android_model_path=""
     android_transcribe_path=""
     android_assets_path=""
@@ -94,13 +108,21 @@ if [ "$PLATFORM" = "android" ]; then
         android_assets_path="$DEVICE_DATA_DIR/assets"
     fi
 
+    adb shell chmod -R 755 "$DEVICE_DATA_DIR"
+
     echo ""
     echo "Step 5: Running on Android..."
+    android_device=$(adb devices | awk '/\tdevice$/{print $1; exit}')
+    if [ -z "$android_device" ]; then
+        echo "Could not detect Android device ID"
+        exit 1
+    fi
+    echo "Using device: $android_device"
     flutter run \
         "--dart-define=CACTUS_TEST_MODEL=$android_model_path" \
         "--dart-define=CACTUS_TEST_TRANSCRIBE_MODEL=$android_transcribe_path" \
         "--dart-define=CACTUS_TEST_ASSETS=$android_assets_path" \
-        -d android
+        -d "$android_device"
 
 # ---------------------------------------------------------------
 # iOS

@@ -2,7 +2,20 @@
 Have xcode.
 Install following libs:
 - iOS: `gem install xcodeproj`
-- Android: `brew install --cask android-commandlinetools temurin`, then `sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;26.3.11579264"`
+- Android:
+  1. `brew install --cask android-commandlinetools temurin@21`
+  2. The SDK installs to `/opt/homebrew/share/android-commandlinetools` (not `android-sdk`). Add to your shell profile:
+     ```
+     export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+     export PATH="$ANDROID_HOME/platform-tools:$PATH"
+     ```
+  3. Install required SDK components:
+     ```
+     sdkmanager "platform-tools" "platforms;android-34" "platforms;android-36" "build-tools;34.0.0" "build-tools;28.0.3" "ndk;26.3.11579264" "emulator" "system-images;android-34;google_apis;arm64-v8a"
+     ```
+  4. Point Flutter to the SDK: `flutter config --android-sdk $ANDROID_HOME`
+  5. Accept licenses: `sdkmanager --licenses`
+  6. Create an emulator: `avdmanager create avd --name "Pixel_6_API_34" --package "system-images;android-34;google_apis;arm64-v8a" --device "pixel_6"`
 - Flutter: `brew install flutter`
 
 ### COMMANDS

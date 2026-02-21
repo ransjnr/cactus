@@ -18,6 +18,13 @@ if ! command -v adb &>/dev/null; then
     exit 1
 fi
 
+if [ -z "$JAVA_HOME" ]; then
+    jdk21=$(/usr/libexec/java_home -v 21 2>/dev/null)
+    if [ -n "$jdk21" ]; then
+        export JAVA_HOME="$jdk21"
+    fi
+fi
+
 if [ -z "$ANDROID_HOME" ]; then
     if [ -d "/opt/homebrew/share/android-commandlinetools" ]; then
         export ANDROID_HOME="/opt/homebrew/share/android-commandlinetools"
@@ -109,7 +116,7 @@ adb install -r "$APK_PATH"
 echo ""
 echo "Step 6: Pushing models and assets to device..."
 
-APP_DATA_DIR="/sdcard/Android/data/com.cactus.nativetest/files/cactus_test"
+APP_DATA_DIR="/data/local/tmp/cactus_test"
 adb shell mkdir -p "$APP_DATA_DIR"
 
 model_path=""
@@ -157,6 +164,8 @@ if [ -d "$assets_src" ]; then
     assets_path="$APP_DATA_DIR/assets"
 fi
 
+adb shell chmod -R 755 "$APP_DATA_DIR"
+
 # ---------------------------------------------------------------
 # Step 7: Launch and stream logs
 # ---------------------------------------------------------------
@@ -165,11 +174,13 @@ echo ""
 echo "Step 7: Launching tests..."
 echo "--------------------------"
 
+adb logcat -c
+
 adb shell am start -n "com.cactus.nativetest/.MainActivity" \
     --es "MODEL_PATH" "$model_path" \
     --es "TRANSCRIBE_PATH" "$transcribe_path" \
     --es "ASSETS_PATH" "$assets_path"
 
 echo ""
-echo "Streaming logcat (Ctrl+C to stop)..."
-adb logcat -s System.out:I | grep -v "^$"
+echo "Streaming logcat (exits when tests complete)..."
+adb logcat -s System.out:I | awk '/\S/{print} /=== Done ===/{exit}'
